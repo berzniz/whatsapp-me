@@ -173,7 +173,9 @@ export class WhatsAppClient {
               date: analysis.date,
               time: analysis.time,
               location: analysis.location,
-              description: analysis.description
+              description: analysis.description,
+              startDateISO: analysis.startDateISO,
+              endDateISO: analysis.endDateISO
             });
             
             // If we found the target group, send the summary
@@ -292,153 +294,183 @@ export class WhatsAppClient {
     // Current timestamp in iCalendar format
     const now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
     
-    // Try to parse the date and time
+    // Try to use the ISO date strings provided by OpenAI
     let startDate = now;
     let endDate = now;
     
     try {
-      // Get current date as the base
-      const today = new Date();
-      let eventDate = new Date(today);
-      
-      // Parse the date string
-      if (eventDetails.date) {
-        const dateStr = eventDetails.date.toLowerCase();
+      if (eventDetails.startDateISO) {
+        // Convert ISO string to iCalendar format
+        startDate = new Date(eventDetails.startDateISO)
+          .toISOString()
+          .replace(/[-:]/g, '')
+          .split('.')[0] + 'Z';
         
-        // Handle absolute dates first
-        const absoluteDateMatch = dateStr.match(/(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{2,4})/);
-        if (absoluteDateMatch) {
-          // Assuming DD/MM/YYYY format (adjust if your locale uses MM/DD/YYYY)
-          const day = parseInt(absoluteDateMatch[1]);
-          const month = parseInt(absoluteDateMatch[2]) - 1; // JS months are 0-indexed
-          const year = parseInt(absoluteDateMatch[3]);
+        // Use the provided end date or default to start + 1 hour
+        if (eventDetails.endDateISO) {
+          endDate = new Date(eventDetails.endDateISO)
+            .toISOString()
+            .replace(/[-:]/g, '')
+            .split('.')[0] + 'Z';
+        } else {
+          // Default to 1 hour after start time
+          const endEventDate = new Date(new Date(eventDetails.startDateISO).getTime() + 60 * 60 * 1000);
+          endDate = endEventDate
+            .toISOString()
+            .replace(/[-:]/g, '')
+            .split('.')[0] + 'Z';
+        }
+        
+        // Check if the time part is 08:00:00 (meaning it was a date-only event set to 8am by OpenAI)
+        const startDateTime = new Date(eventDetails.startDateISO);
+        const isDefaultTime = startDateTime.getHours() === 8 && startDateTime.getMinutes() === 0;
+        
+        console.log(`Using OpenAI provided dates - Start: ${startDate}, End: ${endDate}${isDefaultTime ? ' (Default 8am-9am time)' : ''}`);
+      } else {
+        // Fall back to manual parsing if ISO dates are not provided
+        // Get current date as the base
+        const today = new Date();
+        let eventDate = new Date(today);
+        
+        // Parse the date string
+        if (eventDetails.date) {
+          const dateStr = eventDetails.date.toLowerCase();
           
-          eventDate = new Date(year < 100 ? year + 2000 : year, month, day);
-        } 
-        // Handle month names
-        else if (dateStr.match(/\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December)/i)) {
-          const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 
-                             'july', 'august', 'september', 'october', 'november', 'december'];
-          
-          for (let i = 0; i < monthNames.length; i++) {
-            if (dateStr.toLowerCase().includes(monthNames[i])) {
-              const dayMatch = dateStr.match(/(\d{1,2})/);
-              if (dayMatch) {
-                const day = parseInt(dayMatch[1]);
-                eventDate.setMonth(i);
-                eventDate.setDate(day);
-                break;
+          // Handle absolute dates first
+          const absoluteDateMatch = dateStr.match(/(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{2,4})/);
+          if (absoluteDateMatch) {
+            // Assuming DD/MM/YYYY format (adjust if your locale uses MM/DD/YYYY)
+            const day = parseInt(absoluteDateMatch[1]);
+            const month = parseInt(absoluteDateMatch[2]) - 1; // JS months are 0-indexed
+            const year = parseInt(absoluteDateMatch[3]);
+            
+            eventDate = new Date(year < 100 ? year + 2000 : year, month, day);
+          } 
+          // Handle month names
+          else if (dateStr.match(/\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December)/i)) {
+            const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 
+                               'july', 'august', 'september', 'october', 'november', 'december'];
+            
+            for (let i = 0; i < monthNames.length; i++) {
+              if (dateStr.toLowerCase().includes(monthNames[i])) {
+                const dayMatch = dateStr.match(/(\d{1,2})/);
+                if (dayMatch) {
+                  const day = parseInt(dayMatch[1]);
+                  eventDate.setMonth(i);
+                  eventDate.setDate(day);
+                  break;
+                }
               }
             }
           }
-        }
-        // Handle days of the week (English)
-        else if (dateStr.match(/(sunday|monday|tuesday|wednesday|thursday|friday|saturday)/i)) {
-          const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-          const targetDay = dayNames.findIndex(day => dateStr.toLowerCase().includes(day));
-          
-          if (targetDay !== -1) {
-            const currentDay = today.getDay();
-            let daysToAdd = targetDay - currentDay;
+          // Handle days of the week (English)
+          else if (dateStr.match(/(sunday|monday|tuesday|wednesday|thursday|friday|saturday)/i)) {
+            const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+            const targetDay = dayNames.findIndex(day => dateStr.toLowerCase().includes(day));
             
-            // If it's "next" day, add 7 days
-            if (dateStr.includes('next')) {
-              daysToAdd += 7;
-            } 
-            // If it's the same day but we've passed it, or it's a past day, go to next week
-            else if (daysToAdd <= 0 && !dateStr.includes('today')) {
-              daysToAdd += 7;
-            }
-            
-            eventDate.setDate(today.getDate() + daysToAdd);
-          }
-        }
-        // Handle Hebrew days of the week
-        else if (dateStr.match(/יום (ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/i)) {
-          const hebrewDayMap: Record<string, number> = {
-            'ראשון': 0,   // Sunday
-            'שני': 1,     // Monday
-            'שלישי': 2,   // Tuesday
-            'רביעי': 3,   // Wednesday
-            'חמישי': 4,   // Thursday
-            'שישי': 5,    // Friday
-            'שבת': 6      // Saturday
-          };
-          
-          // Find which Hebrew day is mentioned
-          let targetDay = -1;
-          for (const [hebrewDay, dayIndex] of Object.entries(hebrewDayMap)) {
-            if (dateStr.includes(hebrewDay)) {
-              targetDay = dayIndex;
-              break;
+            if (targetDay !== -1) {
+              const currentDay = today.getDay();
+              let daysToAdd = targetDay - currentDay;
+              
+              // If it's "next" day, add 7 days
+              if (dateStr.includes('next')) {
+                daysToAdd += 7;
+              } 
+              // If it's the same day but we've passed it, or it's a past day, go to next week
+              else if (daysToAdd <= 0 && !dateStr.includes('today')) {
+                daysToAdd += 7;
+              }
+              
+              eventDate.setDate(today.getDate() + daysToAdd);
             }
           }
-          
-          if (targetDay !== -1) {
-            const currentDay = today.getDay();
-            let daysToAdd = targetDay - currentDay;
+          // Handle Hebrew days of the week
+          else if (dateStr.match(/יום (ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/i)) {
+            const hebrewDayMap: Record<string, number> = {
+              'ראשון': 0,   // Sunday
+              'שני': 1,     // Monday
+              'שלישי': 2,   // Tuesday
+              'רביעי': 3,   // Wednesday
+              'חמישי': 4,   // Thursday
+              'שישי': 5,    // Friday
+              'שבת': 6      // Saturday
+            };
             
-            // If it includes "הבא" (next) or "הקרוב" (upcoming), add 7 days
-            if (dateStr.includes('הבא') || dateStr.includes('הקרוב')) {
-              daysToAdd += 7;
-            } 
-            // If it's the same day but we've passed it, or it's a past day, go to next week
-            else if (daysToAdd <= 0) {
-              daysToAdd += 7;
+            // Find which Hebrew day is mentioned
+            let targetDay = -1;
+            for (const [hebrewDay, dayIndex] of Object.entries(hebrewDayMap)) {
+              if (dateStr.includes(hebrewDay)) {
+                targetDay = dayIndex;
+                break;
+              }
             }
             
-            eventDate.setDate(today.getDate() + daysToAdd);
+            if (targetDay !== -1) {
+              const currentDay = today.getDay();
+              let daysToAdd = targetDay - currentDay;
+              
+              // If it includes "הבא" (next) or "הקרוב" (upcoming), add 7 days
+              if (dateStr.includes('הבא') || dateStr.includes('הקרוב')) {
+                daysToAdd += 7;
+              } 
+              // If it's the same day but we've passed it, or it's a past day, go to next week
+              else if (daysToAdd <= 0) {
+                daysToAdd += 7;
+              }
+              
+              eventDate.setDate(today.getDate() + daysToAdd);
+            }
           }
-        }
-        // Handle "tomorrow" and "today"
-        else if (dateStr.includes('tomorrow')) {
-          eventDate.setDate(today.getDate() + 1);
-        }
-        else if (dateStr.includes('today')) {
-          // Already set to today
+          // Handle "tomorrow" and "today"
+          else if (dateStr.includes('tomorrow')) {
+            eventDate.setDate(today.getDate() + 1);
+          }
+          else if (dateStr.includes('today')) {
+            // Already set to today
+          }
+          
+          console.log(`Parsed date "${dateStr}" to: ${eventDate.toISOString()}`);
         }
         
-        console.log(`Parsed date "${dateStr}" to: ${eventDate.toISOString()}`);
+        // Parse the time
+        if (eventDetails.time) {
+          const timeStr = eventDetails.time.toLowerCase();
+          
+          // Extract hours and minutes
+          let hours = 0;
+          let minutes = 0;
+          
+          // Handle "HH:MM" format
+          const timeMatch = timeStr.match(/(\d{1,2})(?::(\d{2}))?/);
+          if (timeMatch) {
+            hours = parseInt(timeMatch[1]);
+            minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
+            
+            // Handle AM/PM
+            if (timeStr.includes('pm') && hours < 12) {
+              hours += 12;
+            } else if (timeStr.includes('am') && hours === 12) {
+              hours = 0;
+            }
+            
+            eventDate.setHours(hours, minutes, 0, 0);
+          }
+          
+          console.log(`Parsed time "${timeStr}" to: ${eventDate.toISOString()}`);
+        } else {
+          // Default to 8:00 AM if no time specified
+          eventDate.setHours(8, 0, 0, 0);
+        }
+        
+        // Format the date for iCalendar
+        startDate = eventDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+        
+        // End date is 1 hour after start date (9:00 AM if no time was specified)
+        const endEventDate = new Date(eventDate.getTime() + 60 * 60 * 1000);
+        endDate = endEventDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+        
+        console.log(`Event start: ${startDate}, end: ${endDate}`);
       }
-      
-      // Parse the time
-      if (eventDetails.time) {
-        const timeStr = eventDetails.time.toLowerCase();
-        
-        // Extract hours and minutes
-        let hours = 0;
-        let minutes = 0;
-        
-        // Handle "HH:MM" format
-        const timeMatch = timeStr.match(/(\d{1,2})(?::(\d{2}))?/);
-        if (timeMatch) {
-          hours = parseInt(timeMatch[1]);
-          minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
-          
-          // Handle AM/PM
-          if (timeStr.includes('pm') && hours < 12) {
-            hours += 12;
-          } else if (timeStr.includes('am') && hours === 12) {
-            hours = 0;
-          }
-          
-          eventDate.setHours(hours, minutes, 0, 0);
-        }
-        
-        console.log(`Parsed time "${timeStr}" to: ${eventDate.toISOString()}`);
-      } else {
-        // Default to noon if no time specified
-        eventDate.setHours(12, 0, 0, 0);
-      }
-      
-      // Format the date for iCalendar
-      startDate = eventDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-      
-      // End date is 1 hour after start date
-      const endEventDate = new Date(eventDate.getTime() + 60 * 60 * 1000);
-      endDate = endEventDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-      
-      console.log(`Event start: ${startDate}, end: ${endDate}`);
     } catch (error) {
       console.error('Error parsing event date/time:', error);
       // Use default values (current time) if parsing fails
@@ -460,6 +492,7 @@ LOCATION:${eventDetails.location || ''}
 UID:${eventId}
 STATUS:CONFIRMED
 SEQUENCE:0
+TRANSP:TRANSPARENT
 END:VEVENT
 END:VCALENDAR`;
   }

@@ -12,6 +12,8 @@ export interface EventDetails {
   time: string | null;
   location: string | null;
   description: string | null;
+  startDateISO: string | null;
+  endDateISO: string | null;
 }
 
 export class OpenAIService {
@@ -74,6 +76,8 @@ If it is an event, extract the following details:
 3. Time - The time of the event (e.g., "3:00 PM", "15:00", "בשעה 18:00")
 4. Location - Where the event will take place (in Hebrew if possible)
 5. Description - A brief description of the event
+6. Start Date ISO - Convert the date and time to ISO format (YYYY-MM-DDTHH:MM:SS.sssZ)
+7. End Date ISO - Assume the event lasts 1 hour and provide the end time in ISO format
 
 Previous messages for context:
 ${history.map((msg, i) => `[${i + 1}] ${msg}`).join('\n')}
@@ -91,20 +95,30 @@ Respond in the following JSON format:
   "date": "Event date",
   "time": "Event time",
   "location": "Event location in Hebrew if possible",
-  "description": "Event description including the original message and sender information"
+  "description": "Event description including the original message and sender information",
+  "startDateISO": "YYYY-MM-DDTHH:MM:SS.sssZ",
+  "endDateISO": "YYYY-MM-DDTHH:MM:SS.sssZ"
 }
 
 If it's not an event, just set isEvent to false and leave the other fields as null.
 For the summary, title, and location fields, prefer Hebrew if the content is in Hebrew or relates to Hebrew speakers.
 Make sure to include the original message in the summary.
 In the description, include both the original message and the sender information.
+
+For the startDateISO and endDateISO fields:
+1. Analyze the date and time from the message
+2. Convert to ISO format (YYYY-MM-DDTHH:MM:SS.sssZ)
+3. If the time is not specified, set the time to 8:00 AM (08:00) and end time to 9:00 AM (09:00) in Israel Timezone
+4. If there is no year in the date, assume the current year (${new Date().getFullYear()})
+5. If a time is specified, set the end time to 1 hour after the start time
+6. If you can't determine a date, use the current date
 `;
 
       // Call OpenAI API
       const response = await this.openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [
-          { role: 'system', content: 'You are a helpful assistant that analyzes WhatsApp messages to detect events and extract structured details. For Hebrew content, provide Hebrew output for summary, title, and location.' },
+          { role: 'system', content: 'You are a helpful assistant that analyzes WhatsApp messages to detect events and extract structured details. For Hebrew content, provide Hebrew output for summary, title, and location. You are also skilled at converting dates and times to ISO format.' },
           { role: 'user', content: prompt }
         ],
         temperature: 0.3,
@@ -134,7 +148,9 @@ In the description, include both the original message and the sender information
           date: parsedResponse.date || null,
           time: parsedResponse.time || null,
           location: parsedResponse.location || null,
-          description: description
+          description: description,
+          startDateISO: parsedResponse.startDateISO || null,
+          endDateISO: parsedResponse.endDateISO || null
         };
       } catch (parseError) {
         console.error('Error parsing OpenAI response:', parseError);
@@ -151,7 +167,9 @@ In the description, include both the original message and the sender information
           date: null,
           time: null,
           location: null,
-          description: null
+          description: null,
+          startDateISO: null,
+          endDateISO: null
         };
       }
     } catch (error) {
@@ -163,7 +181,9 @@ In the description, include both the original message and the sender information
         date: null,
         time: null,
         location: null,
-        description: null
+        description: null,
+        startDateISO: null,
+        endDateISO: null
       };
     }
   }
