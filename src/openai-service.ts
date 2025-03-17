@@ -69,6 +69,7 @@ export class OpenAIService {
 Analyze the following WhatsApp message and determine if it contains information about an event (like a meeting, party, gathering, etc.).
 Events usually contains a day reference, like "יום ראשון" or "יום שני" or "יום שלישי" or "יום רביעי" or "יום חמישי" or "יום שישי" or "יום שבת" 
 It could also be a specific date. It doesn't have to include all information like location.
+If the message only tries to find a good time to meet, it's not an event.
 
 If it is an event, extract the following details:
 1. Title - A short title for the event (in Hebrew if possible)
@@ -107,11 +108,12 @@ In the description, include both the original message and the sender information
 
 For the startDateISO and endDateISO fields:
 1. Analyze the date and time from the message
-2. Convert to ISO format (YYYY-MM-DDTHH:MM:SS.sssZ)
-3. If the time is not specified, set the time to 8:00 AM (08:00) and end time to 9:00 AM (09:00) in Israel Timezone
-4. If there is no year in the date, assume the current year (${new Date().getFullYear()})
-5. If a time is specified, set the end time to 1 hour after the start time
-6. If you can't determine a date, use the current date
+2. Assume any date and time mentioned is in Israel timezone
+3. Convert to ISO format (YYYY-MM-DDTHH:MM:SS.sssZ)
+4. If the time is not specified, set the time to 8:00 AM (08:00) and end time to 9:00 AM (09:00)
+5. If there is no year in the date, assume the current year (${new Date().getFullYear()})
+6. If a time is specified, set the end time to 1 hour after the start time
+7. If you can't determine a date, use the current date
 `;
 
       // Call OpenAI API

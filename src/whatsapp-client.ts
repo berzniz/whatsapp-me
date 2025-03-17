@@ -54,6 +54,11 @@ export class WhatsAppClient {
   
   private async findChromePath(): Promise<string | undefined> {
     try {
+      if (process.env.CHROME_PATH) {
+        console.log(`Using Chrome path from environment variable: ${process.env.CHROME_PATH}`);
+        return process.env.CHROME_PATH;
+      }
+      
       console.log('Launching browser to find Chrome executable path...');
       // Try to find Chrome executable path using Puppeteer
       const browser = await puppeteer.launch();
