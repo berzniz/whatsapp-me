@@ -74,10 +74,10 @@ export class OpenAIService {
   /**
    * Analyze a message to detect if it contains an event
    */
-  public async analyzeMessage(chatId: string, message: string, sender?: string): Promise<EventDetails> {
+  public async analyzeMessage(chatId: string, message: string, chatName: string, sender?: string): Promise<EventDetails> {
     try {
       // Check if the chat is allowed
-      if (!this.isChatAllowed(sender || chatId)) {
+      if (!this.isChatAllowed(chatName || chatId)) {
         console.log(`Skipping analysis for chat: ${chatId} - not in allowed list`);
         return {
           isEvent: false,

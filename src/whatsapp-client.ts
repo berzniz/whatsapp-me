@@ -168,6 +168,7 @@ export class WhatsAppClient {
           const analysis = await this.openaiService.analyzeMessage(
             chat.id._serialized, 
             message.body,
+            chatName,
             contactName
           );
           
