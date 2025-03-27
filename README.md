@@ -34,6 +34,14 @@ This application connects to WhatsApp Web, listens for messages, and uses OpenAI
    ```
    OPENAI_API_KEY=your_api_key_here
    ```
+4. (Optional) Add `ALLOWED_CHAT_NAMES` to your `.env` file to filter which chats are analyzed:
+   ```
+   ALLOWED_CHAT_NAMES=Family Group,Work Team,Book Club
+   ```
+   - If not set, all chats will be analyzed
+   - If set, only messages from chats whose names include any of the specified names will be analyzed
+   - Names are case-sensitive and use partial matching (e.g., "Family Group" will match "My Family Group" or "Family Group Chat")
+   - Multiple names can be specified by separating them with commas
 
 ## Usage
 
@@ -89,4 +97,4 @@ When a day of the week is mentioned without "next" (e.g., just "Monday"), the ap
 
 ## License
 
-MIT 
+MIT

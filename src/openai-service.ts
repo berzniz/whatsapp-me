@@ -20,6 +20,7 @@ export class OpenAIService {
   private openai: OpenAI;
   private messageHistory: Map<string, string[]> = new Map();
   private readonly MAX_HISTORY_LENGTH = 5;
+  private readonly allowedChatNames: string[];
 
   constructor() {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -30,6 +31,20 @@ export class OpenAIService {
     this.openai = new OpenAI({
       apiKey: apiKey
     });
+
+    // Get allowed chat names from environment variable
+    const allowedChatNamesStr = process.env.ALLOWED_CHAT_NAMES;
+    this.allowedChatNames = allowedChatNamesStr ? allowedChatNamesStr.split(',').map(name => name.trim()) : [];
+  }
+
+  /**
+   * Check if a chat name is in the allowed list
+   */
+  private isChatAllowed(chatName: string): boolean {
+    if (this.allowedChatNames.length === 0) {
+      return true; // If no names specified, allow all chats
+    }
+    return this.allowedChatNames.some(name => chatName.includes(name));
   }
 
   /**
@@ -61,6 +76,22 @@ export class OpenAIService {
    */
   public async analyzeMessage(chatId: string, message: string, sender?: string): Promise<EventDetails> {
     try {
+      // Check if the chat is allowed
+      if (!this.isChatAllowed(chatId)) {
+        console.log(`Skipping analysis for chat: ${chatId} - not in allowed list`);
+        return {
+          isEvent: false,
+          summary: null,
+          title: null,
+          date: null,
+          time: null,
+          location: null,
+          description: null,
+          startDateISO: null,
+          endDateISO: null
+        };
+      }
+
       // Get the message history for context
       const history = this.getMessageHistory(chatId);
       
