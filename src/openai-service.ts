@@ -77,7 +77,7 @@ export class OpenAIService {
   public async analyzeMessage(chatId: string, message: string, sender?: string): Promise<EventDetails> {
     try {
       // Check if the chat is allowed
-      if (!this.isChatAllowed(chatId)) {
+      if (!this.isChatAllowed(sender || chatId)) {
         console.log(`Skipping analysis for chat: ${chatId} - not in allowed list`);
         return {
           isEvent: false,
