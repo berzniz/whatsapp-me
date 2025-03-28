@@ -155,6 +155,8 @@ export class WhatsAppClient {
         const fromMe = message.fromMe ? '[YOU]' : '';
         
         // Log the message
+        console.log(`\n--------------------------------`);
+        console.log(`\n[${timestamp}] isGroup: "${chat.isGroup}" chatName: "${chatName}" fromMe: "${fromMe}" contactName: "${contactName}"`);
         console.log(`\n[${timestamp}] ${chatName} ${fromMe} ${contactName}: ${message.body}`);
         
         // Add message to history for this chat
@@ -205,6 +207,9 @@ export class WhatsAppClient {
             console.log(`No event detected in message: ${message.body}`);
           }
         }
+
+        console.log(`\n--------------------------------`);
+        console.log(`\n\n`);
       } catch (error) {
         console.error('Error processing message:', error);
       }
