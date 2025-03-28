@@ -78,7 +78,8 @@ export class OpenAIService {
     try {
       // Check if the chat is allowed
       if (!this.isChatAllowed(chatName || chatId)) {
-        console.log(`Skipping analysis for chat: ${chatId} - not in allowed list`);
+        console.log(`Skipping analysis for chat ID: "${chatId}" - chat name: "${chatName}" - not in allowed list`);
+        console.log(`Allowed list:`, JSON.stringify(this.allowedChatNames));
         return {
           isEvent: false,
           summary: null,
