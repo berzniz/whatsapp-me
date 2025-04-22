@@ -120,6 +120,8 @@ ${message}
 
 Sender: ${sender || 'Unknown'}
 
+Current date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+
 Respond in the following JSON format:
 {
   "isEvent": true/false,

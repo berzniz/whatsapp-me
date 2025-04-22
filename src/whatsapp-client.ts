@@ -311,7 +311,7 @@ export class WhatsAppClient {
     
     try {
       if (eventDetails.startDateISO) {
-        // Convert ISO string to iCalendar format
+        // Convert ISO string to iCalendar format but keep it in UTC
         startDate = new Date(eventDetails.startDateISO)
           .toISOString()
           .replace(/[-:]/g, '')
@@ -487,16 +487,31 @@ export class WhatsAppClient {
       // Use default values (current time) if parsing fails
     }
     
-    // Create the iCalendar content
+    // Create the iCalendar content with timezone information
     return `BEGIN:VCALENDAR
 VERSION:2.0
 PRODID:-//WhatsApp-Me//Event//EN
 CALSCALE:GREGORIAN
 METHOD:PUBLISH
+BEGIN:VTIMEZONE
+TZID:Asia/Jerusalem
+BEGIN:STANDARD
+DTSTART:19700101T000000
+TZOFFSETFROM:+0300
+TZOFFSETTO:+0200
+RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
+END:STANDARD
+BEGIN:DAYLIGHT
+DTSTART:19700101T000000
+TZOFFSETFROM:+0200
+TZOFFSETTO:+0300
+RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=4FR
+END:DAYLIGHT
+END:VTIMEZONE
 BEGIN:VEVENT
 DTSTAMP:${now}
-DTSTART:${startDate}
-DTEND:${endDate}
+DTSTART;TZID=Asia/Jerusalem:${startDate.slice(0, -1)}
+DTEND;TZID=Asia/Jerusalem:${endDate.slice(0, -1)}
 SUMMARY:${eventDetails.title || 'Event'}
 DESCRIPTION:${(eventDetails.description || eventDetails.summary || 'Event').replace(/\n/g, '\\n')}
 LOCATION:${eventDetails.location || ''}
