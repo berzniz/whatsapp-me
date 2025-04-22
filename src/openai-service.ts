@@ -141,12 +141,12 @@ In the description, include both the original message and the sender information
 For the startDateISO and endDateISO fields:
 1. Analyze the date and time from the message relative to the current date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
 2. Assume any date and time mentioned is in Israel timezone
-3. Convert to ISO format (YYYY-MM-DDTHH:MM:SS.sssZ)
-4. If the time is not specified, set the time to 8:00 AM (08:00) and end time to 9:00 AM (09:00)
-5. If there is no year mentioned, assume the current year (${new Date().toLocaleDateString('en-US', { year: 'numeric' })})
-6. If there is no month mentioned, assume the current year (${new Date().toLocaleDateString('en-US', { month: 'long' })})
-7. If a time is specified, set the end time to 1 hour after the start time
-8. If you can't determine a date, use the current date
+3. If the time is not specified, set the time to 8:00 AM (08:00) and end time to 9:00 AM (09:00)
+4. If there is no year mentioned, assume the current year (${new Date().toLocaleDateString('en-US', { year: 'numeric' })})
+5. If there is no month mentioned, assume the current year (${new Date().toLocaleDateString('en-US', { month: 'long' })})
+6. If a time is specified, set the end time to 1 hour after the start time
+7. If you can't determine a date, use the current date
+8. Convert to ISO format (YYYY-MM-DDTHH:MM:SS.sssZ)
 `;
 
       // Call OpenAI API
