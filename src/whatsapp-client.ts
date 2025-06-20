@@ -1,670 +1,479 @@
-import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
-import qrcode from 'qrcode-terminal';
+import makeWASocket, {
+  DisconnectReason,
+  useMultiFileAuthState,
+  WAMessageKey,
+  getContentType,
+  isJidGroup,
+  jidNormalizedUser,
+  WAMessage,
+  Browsers
+} from '@whiskeysockets/baileys';
+import { Boom } from '@hapi/boom';
 import * as fs from 'fs';
 import * as path from 'path';
-import puppeteer from 'puppeteer';
+import * as qrcode from 'qrcode-terminal';
 import { OpenAIService, EventDetails } from './openai-service';
 
+interface WASocketType {
+  ev: any;
+  sendMessage: any;
+  groupMetadata: any;
+  sendPresenceUpdate: any;
+  end: any;
+  logout: any;
+  requestPairingCode?: any;
+  authState: any;
+  user: any;
+}
+
 export class WhatsAppClient {
-  private client!: Client;
+  private socket: WASocketType | null = null;
   private isReady: boolean = false;
   private reconnectAttempts: number = 0;
   private maxReconnectAttempts: number = 3;
-  private readonly sessionDir = '.wwebjs_auth';
-  private readonly chromeDataDir: string;
-  private chromePath: string | undefined;
-  private qrCodeDisplayed: boolean = false;
-  private isExistingSession: boolean = false;
-  private forceNewSession: boolean = false;
+  private readonly sessionDir = '.baileys_auth';
   private openaiService: OpenAIService;
   private targetGroupName: string = 'אני'; // The target group to send summaries to
   private targetGroupId: string | null = null;
+  private shouldReconnect: boolean = true;
+  private connectionState: string = 'close';
 
-  constructor(forceNewSession: boolean = false) {
-    this.forceNewSession = forceNewSession;
-    this.chromeDataDir = path.join(this.sessionDir, 'chrome-data');
+  constructor() {
     this.openaiService = new OpenAIService();
     
     // Ensure session directory exists
     this.ensureSessionDir();
-    
-    // If forcing a new session, reset it now
-    if (this.forceNewSession) {
-      this.resetSession();
-    }
-    
-    // Check if session already exists
-    this.checkExistingSession();
   }
 
   private ensureSessionDir(): void {
     if (!fs.existsSync(this.sessionDir)) {
       fs.mkdirSync(this.sessionDir, { recursive: true });
     }
-    
-    const sessionPath = path.join(this.sessionDir, 'session');
-    if (!fs.existsSync(sessionPath)) {
-      fs.mkdirSync(sessionPath, { recursive: true });
-    }
-    
-    if (!fs.existsSync(this.chromeDataDir)) {
-      fs.mkdirSync(this.chromeDataDir, { recursive: true });
-    }
   }
-  
-  private async findChromePath(): Promise<string | undefined> {
+
+  private async createSocket(): Promise<void> {
     try {
-      if (process.env.CHROME_PATH) {
-        console.log(`Using Chrome path from environment variable: ${process.env.CHROME_PATH}`);
-        return process.env.CHROME_PATH;
-      }
+      console.log('Creating WhatsApp socket...');
       
-      console.log('Launching browser to find Chrome executable path...');
-      // Try to find Chrome executable path using Puppeteer
-      const browser = await puppeteer.launch();
-      const executablePath = browser.process()?.spawnfile;
-      await browser.close();
+      // Initialize auth state
+      const { state, saveCreds } = await useMultiFileAuthState(this.sessionDir);
       
-      if (executablePath) {
-        console.log(`Found Chrome executable at: ${executablePath}`);
-        return executablePath;
-      } else {
-        console.log('Could not find Chrome executable path, using default');
-        return undefined;
-      }
+      // Create the socket
+      this.socket = makeWASocket({
+        auth: state,
+        browser: Browsers.ubuntu('WhatsApp Event Detection'),
+        defaultQueryTimeoutMs: 60000,
+        connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 10000,
+        markOnlineOnConnect: false,
+        syncFullHistory: false,
+        fireInitQueries: true,
+        generateHighQualityLinkPreview: false,
+        getMessage: async (key: WAMessageKey) => {
+          // Return empty message for now - could be enhanced with message store
+          return { conversation: '' } as any;
+        }
+      });
+
+      this.setupEventListeners(saveCreds);
+      
     } catch (error) {
-      console.error('Error finding Chrome path:', error);
-      return undefined;
+      console.error('Error creating WhatsApp socket:', error);
+      throw error;
     }
   }
 
-  private initializeClient(chromePath?: string): void {
-    console.log('Creating WhatsApp client...');
-    
-    this.client = new Client({
-      authStrategy: new LocalAuth({
-        dataPath: this.sessionDir,
-        clientId: 'whatsapp-me-client'
-      }),
-      puppeteer: {
-        headless: true,
-        executablePath: chromePath,
-        args: [
-          '--no-sandbox',
-          '--disable-setuid-sandbox',
-          '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--disable-gpu',
-          '--user-data-dir=' + this.chromeDataDir
-        ]
-      },
-      restartOnAuthFail: true
-    });
+  private setupEventListeners(saveCreds: () => void): void {
+    if (!this.socket) return;
 
-    this.setupEventListeners();
-  }
-
-  private setupEventListeners(): void {
-    this.client.on('qr', (qr) => {
-      this.qrCodeDisplayed = true;
-      console.log('Scan the QR code below to log in to WhatsApp:');
-      qrcode.generate(qr, { small: true });
-      console.log('\nWaiting for QR code to be scanned...');
-    });
-
-    this.client.on('loading_screen', (percent, message) => {
-      console.log(`Loading WhatsApp: ${percent}% - ${message}`);
-    });
-
-    this.client.on('authenticated', () => {
-      console.log('Authentication successful!');
-      console.log('Waiting for WhatsApp to fully load...');
-    });
-
-    this.client.on('auth_failure', (error) => {
-      console.error('Authentication failed:', error);
-      console.log('Authentication error occurred. Please restart the application and try again.');
+    // Handle connection updates
+    this.socket.ev.on('connection.update', async (update: any) => {
+      const { connection, lastDisconnect, qr } = update;
       
-      // Don't remove the session directory to preserve data
-      process.exit(1);
-    });
+      if (qr) {
+        console.log('QR Code received. Please scan with your WhatsApp mobile app.');
+        qrcode.generate(qr, { small: true });
+      }
 
-    this.client.on('ready', async () => {
-      console.log('Client is ready!');
-      this.isReady = true;
-      this.reconnectAttempts = 0;
-      
-      // Find the target group when client is ready
-      await this.findTargetGroup();
-    });
-
-    // Listen to all incoming messages, including those sent by the user
-    this.client.on('message_create', async (message) => {
-      try {
-        // Skip messages sent by this client to avoid loops
-        if (/* message.fromMe && */ message.body.includes('Event Summary:') || message.body.includes('Event details')) {
-          console.log('Skipping message from self:', message.body);
-          return;
+      if (connection === 'close') {
+        this.connectionState = 'close';
+        this.isReady = false;
+        
+        const shouldReconnect = (lastDisconnect?.error as Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+        console.log('Connection closed due to:', lastDisconnect?.error, ', reconnecting:', shouldReconnect);
+        
+        if (shouldReconnect && this.shouldReconnect && this.reconnectAttempts < this.maxReconnectAttempts) {
+          this.reconnectAttempts++;
+          console.log(`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+          
+          // Wait before reconnecting
+          await new Promise(resolve => setTimeout(resolve, 5000));
+          await this.createSocket();
+        } else if (!shouldReconnect) {
+          console.log('Logged out. Please restart the application and scan QR code again.');
+        } else {
+          console.log('Max reconnection attempts reached. Please restart the application.');
         }
+      } else if (connection === 'open') {
+        this.connectionState = 'open';
+        this.isReady = true;
+        this.reconnectAttempts = 0;
+        console.log('WhatsApp connection opened successfully!');
         
-        const chat = await message.getChat();
-        const contact = await message.getContact();
-        const contactName = contact.pushname || contact.number;
-        const timestamp = new Date().toLocaleTimeString();
-        const chatName = chat.isGroup ? `[${chat.name}]` : '';
-        const fromMe = message.fromMe ? '[YOU]' : '';
-        
-        // Log the message
-        console.log(`\n--------------------------------`);
-        console.log(`\n[${timestamp}] isGroup: "${chat.isGroup}" chatName: "${chatName}" fromMe: "${fromMe}" contactName: "${contactName}"`);
-        console.log(`\n[${timestamp}] ${chatName} ${fromMe} ${contactName}: ${message.body}`);
-        
-        // Add message to history for this chat
-        this.openaiService.addMessageToHistory(chat.id._serialized, message.body);
-        
-        // Only analyze messages that aren't empty and aren't from the target group
-        if (message.body.trim() /* && chat.name !== this.targetGroupName */) {
-          console.log(`Analyzing message for events...`);
-          
-          // Analyze the message for events
-          const analysis = await this.openaiService.analyzeMessage(
-            chat.id._serialized, 
-            message.body,
-            chatName,
-            contactName
-          );
-          
-          if (analysis.isEvent && analysis.summary) {
-            console.log(`Event detected! Summary: ${analysis.summary}`);
-            console.log(`Event details:`, {
-              title: analysis.title,
-              date: analysis.date,
-              time: analysis.time,
-              location: analysis.location,
-              description: analysis.description,
-              startDateISO: analysis.startDateISO,
-              endDateISO: analysis.endDateISO
-            });
-            
-            // If we found the target group, send the summary
-            if (this.targetGroupId) {
-              const sourceChatInfo = chat.isGroup ? 
-                `Group: ${chat.name}` : 
-                `Contact: ${contactName}`;
-              
-              const summaryMessage = `Event Summary:\n\n${analysis.summary}\n\nSource: ${sourceChatInfo}`;
-              
-              // Send the text summary
-              await this.sendMessageToGroup(this.targetGroupId, summaryMessage);
-              console.log(`Event summary sent to "${this.targetGroupName}" group`);
-              
-              // Send as WhatsApp event using the structured data from OpenAI
-              await this.sendEventToGroup(this.targetGroupId, analysis);
-            } else {
-              console.log(`Target group "${this.targetGroupName}" not found. Summary not sent.`);
-            }
-          } else {
-            console.log(`No event detected in message: ${message.body}`);
+        // Find the target group when connection is established
+        await this.findTargetGroup();
+      } else if (connection === 'connecting') {
+        this.connectionState = 'connecting';
+        console.log('Connecting to WhatsApp...');
+      }
+    });
+
+    // Handle credential updates
+    this.socket.ev.on('creds.update', saveCreds);
+
+    // Handle incoming messages
+    this.socket.ev.on('messages.upsert', async (messageUpdate: any) => {
+      const { messages, type } = messageUpdate;
+      
+      if (type !== 'notify') return;
+      
+      for (const message of messages) {
+        await this.handleIncomingMessage(message);
+      }
+    });
+
+    // Handle group updates
+    this.socket.ev.on('groups.update', async (updates: any[]) => {
+      for (const update of updates) {
+        if (update.subject && !this.targetGroupId) {
+          // Check if this is our target group
+          if (update.subject === this.targetGroupName) {
+            this.targetGroupId = update.id;
+            console.log(`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`);
           }
         }
-
-        console.log(`\n--------------------------------`);
-        console.log(`\n\n`);
-      } catch (error) {
-        console.error('Error processing message:', error);
       }
     });
 
-    this.client.on('disconnected', async (reason) => {
-      console.log(`\nClient was disconnected: ${reason}`);
-      this.isReady = false;
-      
-      if (this.reconnectAttempts < this.maxReconnectAttempts) {
-        this.reconnectAttempts++;
-        console.log(`Attempting to reconnect (${this.reconnectAttempts}/${this.maxReconnectAttempts})...`);
-        
-        // Wait a bit before reconnecting
-        await new Promise(resolve => setTimeout(resolve, 5000));
-        
-        // Re-initialize the client
-        this.initializeClient(this.chromePath);
-        try {
-          await this.initialize();
-        } catch (error) {
-          console.error('Failed to reconnect:', error);
+    // Handle chats update
+    this.socket.ev.on('chats.upsert', async (chats: any[]) => {
+      // Look for our target group in new chats
+      for (const chat of chats) {
+        if (isJidGroup(chat.id) && chat.name === this.targetGroupName && !this.targetGroupId) {
+          this.targetGroupId = chat.id;
+          console.log(`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`);
         }
-      } else {
-        console.error('Maximum reconnection attempts reached. Please restart the application.');
-        process.exit(1);
       }
     });
+  }
+
+  private async handleIncomingMessage(message: WAMessage): Promise<void> {
+    try {
+      // Skip if message is from self or has no content
+      if (message.key.fromMe || !message.message) return;
+
+      const messageType = getContentType(message.message);
+      if (!messageType || messageType !== 'conversation' && messageType !== 'extendedTextMessage') {
+        return; // Only process text messages for now
+      }
+
+      // Extract message text
+      let messageText = '';
+      if (messageType === 'conversation') {
+        messageText = message.message.conversation || '';
+      } else if (messageType === 'extendedTextMessage') {
+        messageText = message.message.extendedTextMessage?.text || '';
+      }
+
+      if (!messageText.trim()) return;
+
+      // Skip messages that are event summaries to avoid loops
+      if (messageText.includes('Event Summary:') || messageText.includes('Event details')) {
+        return;
+      }
+
+      const chatId = message.key.remoteJid!;
+      const isGroup = isJidGroup(chatId);
+      const timestamp = new Date().toLocaleTimeString();
+      
+      let chatName = '';
+      let contactName = 'Unknown';
+
+      // Get chat and contact information
+      try {
+        if (isGroup) {
+          const groupMetadata = await this.socket!.groupMetadata(chatId);
+          chatName = groupMetadata.subject || 'Unknown Group';
+          
+          // Find the participant who sent the message
+          const participant = groupMetadata.participants.find((p: any) => 
+            jidNormalizedUser(p.id) === jidNormalizedUser(message.key.participant || ''));
+          contactName = participant?.notify || participant?.id?.split('@')[0] || 'Unknown';
+        } else {
+          chatName = chatId.split('@')[0];
+          contactName = chatName;
+        }
+      } catch (error) {
+        console.error('Error getting chat/contact info:', error);
+      }
+
+      // Log the message
+      console.log(`\n--------------------------------`);
+      console.log(`[${timestamp}] ${isGroup ? `[${chatName}]` : ''} ${contactName}: ${messageText}`);
+
+      // Add message to history for this chat
+      this.openaiService.addMessageToHistory(chatId, messageText);
+
+      // Analyze the message for events
+      console.log(`Analyzing message for events...`);
+      
+      const analysis = await this.openaiService.analyzeMessage(
+        chatId,
+        messageText,
+        chatName,
+        contactName
+      );
+
+      if (analysis.isEvent && analysis.summary) {
+        console.log(`Event detected! Summary: ${analysis.summary}`);
+        console.log(`Event details:`, {
+          title: analysis.title,
+          date: analysis.date,
+          time: analysis.time,
+          location: analysis.location,
+          description: analysis.description,
+          startDateISO: analysis.startDateISO,
+          endDateISO: analysis.endDateISO
+        });
+
+        // If we found the target group, send the summary
+        if (this.targetGroupId) {
+          const sourceChatInfo = isGroup ? 
+            `Group: ${chatName}` : 
+            `Contact: ${contactName}`;
+
+          const summaryMessage = `Event Summary:\n\n${analysis.summary}\n\nSource: ${sourceChatInfo}`;
+
+          // Send the text summary
+          await this.sendMessageToGroup(this.targetGroupId, summaryMessage);
+          console.log(`Event summary sent to "${this.targetGroupName}" group`);
+
+          // If we have complete event details, also send a calendar event
+          if (analysis.title && analysis.startDateISO) {
+            await this.sendEventToGroup(this.targetGroupId, analysis);
+          }
+        } else {
+          console.log(`Target group "${this.targetGroupName}" not found. Event summary not sent.`);
+        }
+      }
+
+    } catch (error) {
+      console.error('Error handling incoming message:', error);
+    }
   }
 
   private async findTargetGroup(): Promise<void> {
+    if (!this.socket || !this.isReady) return;
+
     try {
-      console.log(`Looking for target group "${this.targetGroupName}"...`);
-      const chats = await this.client.getChats();
-      const targetGroup = chats.find(chat => {
-        return chat.name === this.targetGroupName
-      }
-        
-      );
+      console.log(`Looking for target group: "${this.targetGroupName}"`);
       
-      if (targetGroup) {
-        this.targetGroupId = targetGroup.id._serialized;
-        console.log(`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`);
-      } else {
-        console.log(`Target group "${this.targetGroupName}" not found. Event summaries will not be sent.`);
-      }
+      // We'll rely on the chats.upsert and groups.update events to find the group
+      // This is more efficient than querying all groups
+      
+      // Set a timeout to log if group is not found
+      setTimeout(() => {
+        if (!this.targetGroupId) {
+          console.log(`Target group "${this.targetGroupName}" not found yet. Make sure the bot is added to the group.`);
+        }
+      }, 10000);
+
     } catch (error) {
       console.error('Error finding target group:', error);
     }
   }
 
   private async sendMessageToGroup(groupId: string, message: string): Promise<void> {
+    if (!this.socket || !this.isReady) {
+      console.error('WhatsApp socket not ready');
+      return;
+    }
+
     try {
-      await this.client.sendMessage(groupId, message);
+      await this.socket.sendMessage(groupId, { text: message });
     } catch (error) {
       console.error('Error sending message to group:', error);
     }
   }
 
-  /**
-   * Extracts event details from a summary and sends it as a WhatsApp event
-   */
   private async sendEventToGroup(groupId: string, eventDetails: EventDetails): Promise<void> {
+    if (!this.socket || !this.isReady) {
+      console.error('WhatsApp socket not ready');
+      return;
+    }
+
     try {
-      if (eventDetails.isEvent) {
-        console.log('Creating WhatsApp event with details:', eventDetails);
+      // Create a detailed event message
+      const eventMessage = this.formatEventMessage(eventDetails);
+      
+      // Send the event details
+      await this.socket.sendMessage(groupId, { text: eventMessage });
+      
+      // Send VCF calendar file if we have complete event details
+      if (eventDetails.title && eventDetails.startDateISO) {
+        const vCalendarContent = this.createEventVCalendar(eventDetails);
+        const filename = `event_${Date.now()}.ics`;
         
-        // Format the event vCard
-        const vcard = this.createEventVCard(eventDetails);
-        
-        // Send the vCard as a document
-        const media = new MessageMedia('text/calendar', Buffer.from(vcard).toString('base64'), 'event.ics');
-        await this.client.sendMessage(groupId, media, {
-          caption: 'Event details (add to calendar)'
+        // For now, we'll send the calendar as text
+        // In a full implementation, you could save to file and send as document
+        await this.socket.sendMessage(groupId, { 
+          text: `📅 Calendar Event:\n\n${vCalendarContent}` 
         });
-        
-        console.log('WhatsApp event sent successfully');
-      } else {
-        console.log('No event details available to send');
       }
+
     } catch (error) {
       console.error('Error sending event to group:', error);
     }
   }
-  
-  /**
-   * Creates an iCalendar vCard for an event
-   */
-  private createEventVCard(eventDetails: EventDetails): string {
-    // Generate a unique ID for the event
-    const eventId = `event-${Date.now()}@whatsapp-me.app`;
+
+  private formatEventMessage(eventDetails: EventDetails): string {
+    let eventMessage = `📅 **Event Details:**\n\n`;
     
-    // Current timestamp in iCalendar format
-    const now = new Date().toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-    
-    // Try to use the ISO date strings provided by OpenAI
-    let startDate = now;
-    let endDate = now;
-    
-    try {
-      if (eventDetails.startDateISO) {
-        // Convert ISO string to iCalendar format but keep it in UTC
-        startDate = new Date(eventDetails.startDateISO)
-          .toISOString()
-          .replace(/[-:]/g, '')
-          .split('.')[0] + 'Z';
-        
-        // Use the provided end date or default to start + 1 hour
-        if (eventDetails.endDateISO) {
-          endDate = new Date(eventDetails.endDateISO)
-            .toISOString()
-            .replace(/[-:]/g, '')
-            .split('.')[0] + 'Z';
-        } else {
-          // Default to 1 hour after start time
-          const endEventDate = new Date(new Date(eventDetails.startDateISO).getTime() + 60 * 60 * 1000);
-          endDate = endEventDate
-            .toISOString()
-            .replace(/[-:]/g, '')
-            .split('.')[0] + 'Z';
-        }
-        
-        // Check if the time part is 08:00:00 (meaning it was a date-only event set to 8am by OpenAI)
-        const startDateTime = new Date(eventDetails.startDateISO);
-        const isDefaultTime = startDateTime.getHours() === 8 && startDateTime.getMinutes() === 0;
-        
-        console.log(`Using OpenAI provided dates - Start: ${startDate}, End: ${endDate}${isDefaultTime ? ' (Default 8am-9am time)' : ''}`);
-      } else {
-        // Fall back to manual parsing if ISO dates are not provided
-        // Get current date as the base
-        const today = new Date();
-        let eventDate = new Date(today);
-        
-        // Parse the date string
-        if (eventDetails.date) {
-          const dateStr = eventDetails.date.toLowerCase();
-          
-          // Handle absolute dates first
-          const absoluteDateMatch = dateStr.match(/(\d{1,2})[\/\.](\d{1,2})[\/\.](\d{2,4})/);
-          if (absoluteDateMatch) {
-            // Assuming DD/MM/YYYY format (adjust if your locale uses MM/DD/YYYY)
-            const day = parseInt(absoluteDateMatch[1]);
-            const month = parseInt(absoluteDateMatch[2]) - 1; // JS months are 0-indexed
-            const year = parseInt(absoluteDateMatch[3]);
-            
-            eventDate = new Date(year < 100 ? year + 2000 : year, month, day);
-          } 
-          // Handle month names
-          else if (dateStr.match(/\d{1,2} (?:January|February|March|April|May|June|July|August|September|October|November|December)/i)) {
-            const monthNames = ['january', 'february', 'march', 'april', 'may', 'june', 
-                               'july', 'august', 'september', 'october', 'november', 'december'];
-            
-            for (let i = 0; i < monthNames.length; i++) {
-              if (dateStr.toLowerCase().includes(monthNames[i])) {
-                const dayMatch = dateStr.match(/(\d{1,2})/);
-                if (dayMatch) {
-                  const day = parseInt(dayMatch[1]);
-                  eventDate.setMonth(i);
-                  eventDate.setDate(day);
-                  break;
-                }
-              }
-            }
-          }
-          // Handle days of the week (English)
-          else if (dateStr.match(/(sunday|monday|tuesday|wednesday|thursday|friday|saturday)/i)) {
-            const dayNames = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-            const targetDay = dayNames.findIndex(day => dateStr.toLowerCase().includes(day));
-            
-            if (targetDay !== -1) {
-              const currentDay = today.getDay();
-              let daysToAdd = targetDay - currentDay;
-              
-              // If it's "next" day, add 7 days
-              if (dateStr.includes('next')) {
-                daysToAdd += 7;
-              } 
-              // If it's the same day but we've passed it, or it's a past day, go to next week
-              else if (daysToAdd <= 0 && !dateStr.includes('today')) {
-                daysToAdd += 7;
-              }
-              
-              eventDate.setDate(today.getDate() + daysToAdd);
-            }
-          }
-          // Handle Hebrew days of the week
-          else if (dateStr.match(/יום (ראשון|שני|שלישי|רביעי|חמישי|שישי|שבת)/i)) {
-            const hebrewDayMap: Record<string, number> = {
-              'ראשון': 0,   // Sunday
-              'שני': 1,     // Monday
-              'שלישי': 2,   // Tuesday
-              'רביעי': 3,   // Wednesday
-              'חמישי': 4,   // Thursday
-              'שישי': 5,    // Friday
-              'שבת': 6      // Saturday
-            };
-            
-            // Find which Hebrew day is mentioned
-            let targetDay = -1;
-            for (const [hebrewDay, dayIndex] of Object.entries(hebrewDayMap)) {
-              if (dateStr.includes(hebrewDay)) {
-                targetDay = dayIndex;
-                break;
-              }
-            }
-            
-            if (targetDay !== -1) {
-              const currentDay = today.getDay();
-              let daysToAdd = targetDay - currentDay;
-              
-              // If it includes "הבא" (next) or "הקרוב" (upcoming), add 7 days
-              if (dateStr.includes('הבא') || dateStr.includes('הקרוב')) {
-                daysToAdd += 7;
-              } 
-              // If it's the same day but we've passed it, or it's a past day, go to next week
-              else if (daysToAdd <= 0) {
-                daysToAdd += 7;
-              }
-              
-              eventDate.setDate(today.getDate() + daysToAdd);
-            }
-          }
-          // Handle "tomorrow" and "today"
-          else if (dateStr.includes('tomorrow')) {
-            eventDate.setDate(today.getDate() + 1);
-          }
-          else if (dateStr.includes('today')) {
-            // Already set to today
-          }
-          
-          console.log(`Parsed date "${dateStr}" to: ${eventDate.toISOString()}`);
-        }
-        
-        // Parse the time
-        if (eventDetails.time) {
-          const timeStr = eventDetails.time.toLowerCase();
-          
-          // Extract hours and minutes
-          let hours = 0;
-          let minutes = 0;
-          
-          // Handle "HH:MM" format
-          const timeMatch = timeStr.match(/(\d{1,2})(?::(\d{2}))?/);
-          if (timeMatch) {
-            hours = parseInt(timeMatch[1]);
-            minutes = timeMatch[2] ? parseInt(timeMatch[2]) : 0;
-            
-            // Handle AM/PM
-            if (timeStr.includes('pm') && hours < 12) {
-              hours += 12;
-            } else if (timeStr.includes('am') && hours === 12) {
-              hours = 0;
-            }
-            
-            eventDate.setHours(hours, minutes, 0, 0);
-          }
-          
-          console.log(`Parsed time "${timeStr}" to: ${eventDate.toISOString()}`);
-        } else {
-          // Default to 8:00 AM if no time specified
-          eventDate.setHours(8, 0, 0, 0);
-        }
-        
-        // Format the date for iCalendar
-        startDate = eventDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-        
-        // End date is 1 hour after start date (9:00 AM if no time was specified)
-        const endEventDate = new Date(eventDate.getTime() + 60 * 60 * 1000);
-        endDate = endEventDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
-        
-        console.log(`Event start: ${startDate}, end: ${endDate}`);
-      }
-    } catch (error) {
-      console.error('Error parsing event date/time:', error);
-      // Use default values (current time) if parsing fails
+    if (eventDetails.title) {
+      eventMessage += `**Title:** ${eventDetails.title}\n`;
     }
     
-    // Create the iCalendar content with timezone information
-    return `BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//WhatsApp-Me//Event//EN
-CALSCALE:GREGORIAN
-METHOD:PUBLISH
-BEGIN:VTIMEZONE
-TZID:Asia/Jerusalem
-BEGIN:STANDARD
-DTSTART:19700101T000000
-TZOFFSETFROM:+0300
-TZOFFSETTO:+0200
-RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU
-END:STANDARD
-BEGIN:DAYLIGHT
-DTSTART:19700101T000000
-TZOFFSETFROM:+0200
-TZOFFSETTO:+0300
-RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=4FR
-END:DAYLIGHT
-END:VTIMEZONE
-BEGIN:VEVENT
-DTSTAMP:${now}
-DTSTART;TZID=Asia/Jerusalem:${startDate.slice(0, -1)}
-DTEND;TZID=Asia/Jerusalem:${endDate.slice(0, -1)}
-SUMMARY:${eventDetails.title || 'Event'}
-DESCRIPTION:${(eventDetails.description || eventDetails.summary || 'Event').replace(/\n/g, '\\n')}
-LOCATION:${eventDetails.location || ''}
-UID:${eventId}
-STATUS:CONFIRMED
-SEQUENCE:0
-TRANSP:TRANSPARENT
-END:VEVENT
-END:VCALENDAR`;
+    if (eventDetails.date) {
+      eventMessage += `**Date:** ${eventDetails.date}\n`;
+    }
+    
+    if (eventDetails.time) {
+      eventMessage += `**Time:** ${eventDetails.time}\n`;
+    }
+    
+    if (eventDetails.location) {
+      eventMessage += `**Location:** ${eventDetails.location}\n`;
+    }
+    
+    if (eventDetails.description) {
+      eventMessage += `**Description:** ${eventDetails.description}\n`;
+    }
+    
+    if (eventDetails.startDateISO) {
+      eventMessage += `**Start (ISO):** ${eventDetails.startDateISO}\n`;
+    }
+    
+    if (eventDetails.endDateISO) {
+      eventMessage += `**End (ISO):** ${eventDetails.endDateISO}\n`;
+    }
+    
+    return eventMessage;
   }
 
-  private resetSession(): void {
-    try {
-      console.log('Resetting WhatsApp session...');
-      console.log('Session reset complete. Attempting to reuse existing session data.');
-      // Check if session already exists
-      this.checkExistingSession();
-    } catch (error) {
-      console.error('Error resetting session:', error);
-    }
-  }
-
-  private checkExistingSession(): void {
-    const sessionPath = path.join(this.sessionDir, 'session', 'Default', 'Local Storage', 'leveldb');
-    this.isExistingSession = fs.existsSync(sessionPath) && fs.readdirSync(sessionPath).length > 0;
+  private createEventVCalendar(eventDetails: EventDetails): string {
+    const now = new Date();
+    const dtstamp = now.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+    const uid = `event-${Date.now()}@whatsapp-bot`;
     
-    if (this.isExistingSession) {
-      console.log('Found existing WhatsApp session. Will attempt to reuse it.');
-    } else {
-      console.log('No existing session found. You will need to scan a QR code to authenticate.');
+    let vcalendar = 'BEGIN:VCALENDAR\n';
+    vcalendar += 'VERSION:2.0\n';
+    vcalendar += 'PRODID:-//WhatsApp Event Bot//EN\n';
+    vcalendar += 'BEGIN:VEVENT\n';
+    vcalendar += `UID:${uid}\n`;
+    vcalendar += `DTSTAMP:${dtstamp}\n`;
+    
+    if (eventDetails.startDateISO) {
+      const startDate = new Date(eventDetails.startDateISO);
+      const dtstart = startDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      vcalendar += `DTSTART:${dtstart}\n`;
     }
+    
+    if (eventDetails.endDateISO) {
+      const endDate = new Date(eventDetails.endDateISO);
+      const dtend = endDate.toISOString().replace(/[-:]/g, '').split('.')[0] + 'Z';
+      vcalendar += `DTEND:${dtend}\n`;
+    }
+    
+    if (eventDetails.title) {
+      vcalendar += `SUMMARY:${eventDetails.title.replace(/\n/g, '\\n')}\n`;
+    }
+    
+    if (eventDetails.description) {
+      vcalendar += `DESCRIPTION:${eventDetails.description.replace(/\n/g, '\\n')}\n`;
+    }
+    
+    if (eventDetails.location) {
+      vcalendar += `LOCATION:${eventDetails.location.replace(/\n/g, '\\n')}\n`;
+    }
+    
+    vcalendar += 'END:VEVENT\n';
+    vcalendar += 'END:VCALENDAR';
+    
+    return vcalendar;
   }
 
   public async initialize(): Promise<void> {
     try {
       console.log('Initializing WhatsApp client...');
+      await this.createSocket();
       
-      // Find Chrome path before initializing client
-      this.chromePath = await this.findChromePath();
+      // Wait for connection to be established
+      let attempts = 0;
+      const maxAttempts = 60; // 60 seconds timeout
       
-      // Initialize client with Chrome path
-      this.initializeClient(this.chromePath);
-      
-      console.log('Starting WhatsApp client...');
-      if (this.isExistingSession) {
-        console.log('Attempting to restore previous session...');
-      } else {
-        console.log('New session will be created. Please scan the QR code when prompted.');
-      }
-      
-      let initAttempts = 0;
-      const maxInitAttempts = 3;
-      
-      while (initAttempts < maxInitAttempts) {
-        try {
-          await this.client.initialize();
-          // If we get here, initialization was successful
-          break;
-        } catch (error: any) {
-          initAttempts++;
-          console.error(`Error during client initialization (attempt ${initAttempts}/${maxInitAttempts}):`, error.message);
-          
-          // Check for specific error messages
-          const errorMessage = error.message || '';
-          const isBrowserLaunchError = errorMessage.includes('Failed to launch the browser process');
-          const isLockError = errorMessage.includes('SingletonLock');
-          
-          if ((isBrowserLaunchError || isLockError) && initAttempts < maxInitAttempts) {
-            console.log('Browser launch failed. Waiting before trying again...');
-            
-            // Wait a bit before retrying
-            console.log(`Waiting 5 seconds before retry ${initAttempts}/${maxInitAttempts}...`);
-            await new Promise(resolve => setTimeout(resolve, 5000));
-            
-            // Reinitialize the client
-            this.initializeClient(this.chromePath);
-          } else if (this.isExistingSession && initAttempts < maxInitAttempts) {
-            // If we're trying to use an existing session and it's failing, try again
-            console.log('Failed to restore previous session. Trying again...');
-            this.initializeClient(this.chromePath);
-          } else if (initAttempts >= maxInitAttempts) {
-            // If we've reached max attempts, throw the error
-            throw new Error(`Failed to initialize client after ${maxInitAttempts} attempts: ${error.message}`);
-          } else {
-            // For other errors, just throw
-            throw error;
-          }
+      while (!this.isReady && attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        attempts++;
+        
+        if (attempts % 10 === 0) {
+          console.log(`Waiting for WhatsApp connection... (${attempts}s)`);
         }
       }
       
-      // Wait for client to be ready with timeout
       if (!this.isReady) {
-        console.log('Waiting for client to be ready...');
-        
-        // Set a timeout to check if QR code was displayed
-        const qrCheckTimeout = setTimeout(() => {
-          if (!this.qrCodeDisplayed && !this.isReady && !this.isExistingSession) {
-            console.log('\nNo QR code was displayed. This might indicate a connection issue.');
-            console.log('Try restarting the application or check your internet connection.');
-          }
-        }, 30000); // 30 second timeout
-        
-        await Promise.race([
-          new Promise<void>((resolve) => {
-            const checkReady = setInterval(() => {
-              if (this.isReady) {
-                clearInterval(checkReady);
-                clearTimeout(qrCheckTimeout);
-                resolve();
-              }
-            }, 1000);
-          }),
-          new Promise<void>((_, reject) => {
-            setTimeout(() => {
-              clearTimeout(qrCheckTimeout);
-              reject(new Error('Timeout waiting for client to be ready'));
-            }, 120000); // 2 minute timeout
-          })
-        ]);
+        throw new Error('Failed to establish WhatsApp connection within timeout period');
       }
+      
+      console.log('WhatsApp client initialized successfully!');
+      
     } catch (error) {
-      console.error('Error initializing client:', error);
+      console.error('Error initializing WhatsApp client:', error);
       throw error;
     }
   }
 
-  private async waitForClientReady(timeoutMs: number): Promise<boolean> {
-    return new Promise<boolean>((resolve) => {
-      if (this.isReady) {
-        resolve(true);
-        return;
-      }
-      
-      const checkInterval = setInterval(() => {
-        if (this.isReady) {
-          clearInterval(checkInterval);
-          clearTimeout(timeout);
-          resolve(true);
-        }
-      }, 1000);
-      
-      const timeout = setTimeout(() => {
-        clearInterval(checkInterval);
-        console.log('Timeout waiting for client to be ready');
-        resolve(false);
-      }, timeoutMs);
-    });
+  public startListeningForMessages(): void {
+    if (!this.isReady) {
+      console.error('WhatsApp client is not ready. Please initialize first.');
+      return;
+    }
+    
+    console.log('Started listening for messages...');
+    console.log('The bot will now monitor all conversations for event-related discussions.');
+    console.log(`Event summaries will be sent to the "${this.targetGroupName}" group when detected.`);
   }
 
-  public startListeningForMessages(): void {
-    console.log('\nListening for all WhatsApp messages and analyzing for events.');
-    console.log(`Event summaries will be sent to the "${this.targetGroupName}" WhatsApp group if found.`);
-    console.log('Messages will be displayed in the format: [time] [group_name] [YOU] contact_name: message');
-    console.log('Press Ctrl+C to exit.\n');
+  public async disconnect(): Promise<void> {
+    this.shouldReconnect = false;
+    
+    if (this.socket) {
+      try {
+        await this.socket.logout();
+      } catch (error) {
+        console.error('Error during logout:', error);
+      }
+    }
+    
+    this.isReady = false;
+    this.socket = null;
+    console.log('WhatsApp client disconnected.');
+  }
+
+  public isConnected(): boolean {
+    return this.isReady && this.connectionState === 'open';
+  }
+
+  public getConnectionState(): string {
+    return this.connectionState;
   }
 } 

@@ -94,7 +94,7 @@ dist
 # Gatsby files
 .cache/
 # Comment in the public line in if your project uses Gatsby and not Next.js
-# https://nextjs.org/blog/next-9-1#public-directory-support
+# https://nextjs.org/docs/api-reference/next.config.js/cdn-support-with-asset-prefix
 # public
 
 # vuepress build output
@@ -103,12 +103,6 @@ dist
 # vuepress v2.x temp and cache directory
 .temp
 .cache
-
-# vitepress build output
-**/.vitepress/dist
-
-# vitepress cache directory
-**/.vitepress/cache
 
 # Docusaurus cache and generated files
 .docusaurus
@@ -135,12 +129,8 @@ dist
 .yarn/install-state.gz
 .pnp.*
 
-# Build
-dist/
+# Baileys authentication directory
+.baileys_auth/
 
-# WhatsApp session data
-.wwebjs_auth/
-.wwebjs_cache/
-
-# OS specific
+# macOS
 .DS_Store

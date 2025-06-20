@@ -6,11 +6,10 @@ dotenv.config();
 
 async function main() {
   try {
-    console.log('Starting WhatsApp Message Reader with Event Detection...');
+    console.log('Starting WhatsApp Event Detection System...');
     console.log('==================================');
-    console.log('Your existing WhatsApp session will always be preserved and reused.');
-    console.log('If you have previously authenticated, you will not need to scan a QR code again.');
-    console.log('If authentication is required, you will be prompted to scan a QR code.');
+    console.log('This system will monitor WhatsApp conversations for event-related discussions');
+    console.log('and automatically create calendar entries from detected events.');
     console.log('==================================\n');
     
     // Check if OpenAI API key is set
@@ -21,14 +20,8 @@ async function main() {
       process.exit(1);
     }
     
-    // Check if user wants to force a new session
-    const forceNewSession = process.argv.includes('--new-session');
-    if (forceNewSession) {
-      console.log('Using --new-session flag. Your authentication data will still be preserved.');
-    }
-    
     // Initialize WhatsApp client
-    const whatsappClient = new WhatsAppClient(forceNewSession);
+    const whatsappClient = new WhatsAppClient();
     
     try {
       await whatsappClient.initialize();
@@ -36,7 +29,7 @@ async function main() {
       
       // Add a delay after initialization to ensure WhatsApp is fully loaded
       console.log('Waiting for WhatsApp to fully load before proceeding...');
-      await new Promise(resolve => setTimeout(resolve, 10000));
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
       console.log('\nWhatsApp connection established successfully.');
       console.log('Your session has been saved for future use.');
@@ -61,10 +54,19 @@ async function main() {
 }
 
 // Handle graceful shutdown
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   console.log('\nShutting down...');
   console.log('Your session has been saved. You can restart the application without scanning the QR code again.');
-  process.exit(0);
+  
+  // Try to gracefully disconnect if we have a client instance
+  try {
+    // We would need to pass the client reference here in a real implementation
+    // For now, we'll just exit
+    process.exit(0);
+  } catch (error) {
+    console.error('Error during shutdown:', error);
+    process.exit(1);
+  }
 });
 
 // Handle uncaught exceptions
