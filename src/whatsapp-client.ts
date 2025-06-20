@@ -359,7 +359,33 @@ export class WhatsAppClient {
       const eventMessage = this.formatEventMessage(eventDetails);
       
       // Send the event details
+      // Send as text message first
       await this.socket.sendMessage(groupId, { text: eventMessage });
+      
+      // Try to send as calendar event if we have complete details
+      if (eventDetails.title && eventDetails.startDateISO && eventDetails.endDateISO) {
+        try {
+          const vCalendarContent = this.createEventVCalendar(eventDetails);
+          const filename = `event_${Date.now()}.ics`;
+          
+          // Create a buffer from the VCalendar content
+          const buffer = Buffer.from(vCalendarContent, 'utf-8');
+          
+          // Send as document attachment
+          await this.socket.sendMessage(groupId, {
+            document: buffer,
+            fileName: filename,
+            mimetype: 'text/calendar',
+            caption: `📅 Calendar Event: ${eventDetails.title}`
+          });
+        } catch (error) {
+          console.error('Failed to send calendar attachment, falling back to text:', error);
+          // Fallback to text format if attachment fails
+          await this.socket.sendMessage(groupId, { 
+            text: `📅 Calendar Event fallback:\n\n${this.createEventVCalendar(eventDetails)}` 
+          });
+        }
+      }
       
       // Send VCF calendar file if we have complete event details
       if (eventDetails.title && eventDetails.startDateISO) {
