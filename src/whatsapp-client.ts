@@ -24,7 +24,7 @@ export class WhatsAppClient {
   private maxReconnectAttempts: number = 3;
   private readonly sessionDir = '.baileys_auth';
   private openaiService: OpenAIService;
-  private targetGroupName: string = 'אני'; // The target group to send summaries to
+  private targetGroupName: string = 'אני'; // Default target group name (can be overridden via TARGET_GROUP_NAME env var)
   private targetGroupId: string | null = null;
   private shouldReconnect: boolean = true;
   private connectionState: string = 'close';
@@ -33,8 +33,30 @@ export class WhatsAppClient {
   constructor() {
     this.openaiService = new OpenAIService();
     
+    // Configure target group from environment variables
+    this.configureTargetGroup();
+    
     // Ensure session directory exists
     this.ensureSessionDir();
+  }
+
+  private configureTargetGroup(): void {
+    // Read target group configuration from environment variables
+    const envTargetGroupId = process.env.TARGET_GROUP_ID?.trim();
+    const envTargetGroupName = process.env.TARGET_GROUP_NAME?.trim();
+    
+    if (envTargetGroupId) {
+      // If TARGET_GROUP_ID is provided, use it directly
+      this.targetGroupId = envTargetGroupId;
+      console.log(`Using target group ID from environment: ${this.targetGroupId}`);
+    } else if (envTargetGroupName) {
+      // If only TARGET_GROUP_NAME is provided, use it for searching
+      this.targetGroupName = envTargetGroupName;
+      console.log(`Will search for target group by name: "${this.targetGroupName}"`);
+    } else {
+      // Use default value if nothing is configured in .env
+      console.log(`Using default target group name: "${this.targetGroupName}"`);
+    }
   }
 
   private ensureSessionDir(): void {
@@ -148,7 +170,7 @@ export class WhatsAppClient {
         }
 
         if (update.subject && !this.targetGroupId) {
-          // Check if this is our target group
+          // Check if this is our target group (only if not already configured from env)
           if (update.subject === this.targetGroupName) {
             this.targetGroupId = update.id;
             console.log(`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`);
@@ -171,7 +193,7 @@ export class WhatsAppClient {
 
     // Handle chats update
     this.socket.ev.on('chats.upsert', async (chats: any[]) => {
-      // Look for our target group in new chats
+      // Look for our target group in new chats (only if not already configured from env)
       for (const chat of chats) {
         if (isJidGroup(chat.id) && chat.name === this.targetGroupName && !this.targetGroupId) {
           this.targetGroupId = chat.id;
@@ -290,6 +312,12 @@ export class WhatsAppClient {
     if (!this.socket || !this.isReady) return;
 
     try {
+      // If we already have the target group ID from environment variables, no need to search
+      if (this.targetGroupId) {
+        console.log(`Target group ID already configured: ${this.targetGroupId}`);
+        return;
+      }
+
       console.log(`Looking for target group: "${this.targetGroupName}"`);
       
       // We'll rely on the chats.upsert and groups.update events to find the group

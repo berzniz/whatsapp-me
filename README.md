@@ -25,7 +25,7 @@ This application connects to WhatsApp using the Baileys library, listens for mes
 - npm or yarn package manager
 - An OpenAI API key
 - A WhatsApp account
-- A WhatsApp group named "אני" (or change the target group name in the code)
+- A WhatsApp group to send event summaries to (configurable via `.env` file)
 
 ## Installation
 
@@ -34,10 +34,34 @@ This application connects to WhatsApp using the Baileys library, listens for mes
    ```
    npm install
    ```
-3. Create a `.env` file in the root directory with your OpenAI API key:
+3. Create a `.env` file in the root directory (copy from `.env.example`):
+   ```
+   cp .env.example .env
+   ```
+   Then configure the following variables:
+   
+   **Required:**
    ```
    OPENAI_API_KEY=your_api_key_here
    ```
+   
+   **Target Group Configuration (choose one):**
+   ```
+   # Option 1: Use target group ID directly (recommended if you know it)
+   TARGET_GROUP_ID=120363123456789012@g.us
+   
+   # Option 2: Use target group name for automatic search
+   TARGET_GROUP_NAME=אני
+   ```
+   - If `TARGET_GROUP_ID` is provided, it will be used directly (faster and more reliable)
+   - If only `TARGET_GROUP_NAME` is provided, the bot will search for the group by name
+   - If neither is provided, defaults to searching for a group named "אני"
+   
+   **Finding your WhatsApp Group ID:**
+   - Run the bot once with `TARGET_GROUP_NAME` configured
+   - When the bot finds your group, it will log the group ID in the console
+   - Copy that ID and use it as `TARGET_GROUP_ID` for better performance
+   
 4. (Optional) Add `ALLOWED_CHAT_NAMES` to your `.env` file to filter which chats are analyzed:
    ```
    ALLOWED_CHAT_NAMES=Family Group,Work Team,Book Club
@@ -109,7 +133,7 @@ When a day of the week is mentioned without "next" (e.g., just "Monday"), the ap
 ## Troubleshooting
 
 - If the application fails to connect, make sure your internet connection is stable
-- If the target group is not found, make sure you have a WhatsApp group named "אני" or change the target group name in the code
+- If the target group is not found, check your `TARGET_GROUP_ID` or `TARGET_GROUP_NAME` configuration in the `.env` file
 - If OpenAI analysis fails, check your API key and internet connection
 - If calendar events don't contain the correct information, the event details might not be clearly specified in the original message
 - If authentication fails, delete the `.baileys_auth` folder and restart to get a fresh QR code
