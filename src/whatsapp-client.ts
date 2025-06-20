@@ -12,19 +12,10 @@ import { Boom } from '@hapi/boom';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as qrcode from 'qrcode-terminal';
+import NodeCache from 'node-cache';
 import { OpenAIService, EventDetails } from './openai-service';
 
-interface WASocketType {
-  ev: any;
-  sendMessage: any;
-  groupMetadata: any;
-  sendPresenceUpdate: any;
-  end: any;
-  logout: any;
-  requestPairingCode?: any;
-  authState: any;
-  user: any;
-}
+type WASocketType = ReturnType<typeof makeWASocket>
 
 export class WhatsAppClient {
   private socket: WASocketType | null = null;
@@ -37,6 +28,7 @@ export class WhatsAppClient {
   private targetGroupId: string | null = null;
   private shouldReconnect: boolean = true;
   private connectionState: string = 'close';
+  private groupCache = new NodeCache({stdTTL: 5 * 60, useClones: false}); // 5 minute TTL
 
   constructor() {
     this.openaiService = new OpenAIService();
@@ -69,6 +61,7 @@ export class WhatsAppClient {
         syncFullHistory: false,
         fireInitQueries: true,
         generateHighQualityLinkPreview: false,
+        cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
         getMessage: async (key: WAMessageKey) => {
           // Return empty message for now - could be enhanced with message store
           return { conversation: '' } as any;
@@ -145,6 +138,15 @@ export class WhatsAppClient {
     // Handle group updates
     this.socket.ev.on('groups.update', async (updates: any[]) => {
       for (const update of updates) {
+        // Update group metadata cache
+        try {
+          const metadata = await this.socket!.groupMetadata(update.id);
+          this.groupCache.set(update.id, metadata);
+          console.log(`Updated group metadata cache for: ${metadata.subject || update.id}`);
+        } catch (error) {
+          console.error(`Failed to update group metadata cache for ${update.id}:`, error);
+        }
+
         if (update.subject && !this.targetGroupId) {
           // Check if this is our target group
           if (update.subject === this.targetGroupName) {
@@ -152,6 +154,18 @@ export class WhatsAppClient {
             console.log(`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`);
           }
         }
+      }
+    });
+
+    // Handle group participants update
+    this.socket.ev.on('group-participants.update', async (event: any) => {
+      // Update group metadata cache when participants change
+      try {
+        const metadata = await this.socket!.groupMetadata(event.id);
+        this.groupCache.set(event.id, metadata);
+        console.log(`Updated group metadata cache for participant change in: ${metadata.subject || event.id}`);
+      } catch (error) {
+        console.error(`Failed to update group metadata cache for participant change in ${event.id}:`, error);
       }
     });
 
