@@ -11,16 +11,12 @@
   },
   "dependencies": {
     "dotenv": "^16.4.7",
-    "inquirer": "^12.4.3",
     "openai": "^4.87.3",
     "puppeteer": "^22.0.0",
-    "puppeteer-extra": "^3.3.6",
-    "puppeteer-extra-plugin-stealth": "^2.11.2",
     "qrcode-terminal": "^0.12.0",
-    "whatsapp-web.js": "1.26.1-alpha.3"
+    "whatsapp-web.js": "^1.30.0"
   },
   "devDependencies": {
-    "@types/inquirer": "^9.0.7",
     "@types/node": "^22.13.10",
     "@types/qrcode-terminal": "^0.12.2",
     "tsx": "^4.19.3",
