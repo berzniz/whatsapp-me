@@ -374,7 +374,7 @@ export class WhatsAppClient {
 						await this.sendMessageToGroup(this.targetGroupId, summaryMessage);
 					}
 					console.log(
-						`Event notification sent to "${this.targetGroupName}" group`,
+						`Single event message with ICS attachment sent to "${this.targetGroupName}" group`,
 					);
 				} else {
 					console.log(
@@ -444,8 +444,8 @@ export class WhatsAppClient {
 		}
 
 		try {
-			// Create concise event message
-			const eventMessage = this.formatUnifiedEventMessage(
+			// Create comprehensive caption with all event details
+			const caption = this.formatUnifiedEventCaption(
 				eventDetails,
 				sourceChatInfo,
 			);
@@ -455,15 +455,15 @@ export class WhatsAppClient {
 			const filename = `event_${Date.now()}.ics`;
 			const buffer = Buffer.from(vCalendarContent, "utf-8");
 
-			// Send message with attachment
+			// Send single message with ICS file and comprehensive caption
 			await this.socket.sendMessage(groupId, {
-				text: eventMessage,
 				document: buffer,
 				fileName: filename,
 				mimetype: "text/calendar",
+				caption: caption,
 			});
 
-			console.log(`Unified event message with calendar attachment sent`);
+			console.log(`Single event message with ICS attachment sent to group`);
 		} catch (error) {
 			console.error("Error sending unified event message:", error);
 			// Fallback to text-only message
@@ -525,17 +525,7 @@ export class WhatsAppClient {
 				}
 			}
 
-			// Send VCF calendar file if we have complete event details
-			if (eventDetails.title && eventDetails.startDateISO) {
-				const vCalendarContent = this.createEventVCalendar(eventDetails);
-				const filename = `event_${Date.now()}.ics`;
-
-				// For now, we'll send the calendar as text
-				// In a full implementation, you could save to file and send as document
-				await this.socket.sendMessage(groupId, {
-					text: `📅 Calendar Event:\n\n${vCalendarContent}`,
-				});
-			}
+			// Note: This method is kept for backward compatibility but sendUnifiedEventMessage is preferred
 		} catch (error) {
 			console.error("Error sending event to group:", error);
 		}
@@ -583,6 +573,42 @@ export class WhatsAppClient {
 		message += `\n💬 ${sourceChatInfo}`;
 
 		return message;
+	}
+
+	private formatUnifiedEventCaption(
+		eventDetails: EventDetails,
+		sourceChatInfo: string,
+	): string {
+		let caption = `📅 *${eventDetails.title || "Event"}*\n`;
+
+		// Date and time on same line if both exist
+		if (eventDetails.date && eventDetails.time) {
+			caption += `📅 ${eventDetails.date} | 🕐 ${eventDetails.time}\n`;
+		} else if (eventDetails.date) {
+			caption += `📅 ${eventDetails.date}\n`;
+		} else if (eventDetails.time) {
+			caption += `🕐 ${eventDetails.time}\n`;
+		}
+
+		// Location
+		if (eventDetails.location) {
+			caption += `📍 ${eventDetails.location}\n`;
+		}
+
+		// Brief description
+		if (eventDetails.description) {
+			const firstLine = eventDetails.description.split("\n")[0];
+			if (firstLine.length > 150) {
+				caption += `📝 ${firstLine.substring(0, 147)}...\n`;
+			} else {
+				caption += `📝 ${firstLine}\n`;
+			}
+		}
+
+		// Source
+		caption += `\n💬 ${sourceChatInfo}`;
+
+		return caption;
 	}
 
 	private formatEventMessage(eventDetails: EventDetails): string {
