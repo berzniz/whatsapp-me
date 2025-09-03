@@ -134,3 +134,6 @@ dist
 
 # macOS
 .DS_Store
+
+# Baileys
+.baileys_auth
