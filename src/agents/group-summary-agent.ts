@@ -58,7 +58,17 @@ ${allowedGroupsList}
 
 ALLOWED_CHAT_NAMES: ${this.config.allowedChatNames.join(", ") || "None configured"}
 
-CRITICAL: You MUST use the read_group_messages tool to fetch message history BEFORE answering any questions. Never say you don't have access - always call the tool first.
+CRITICAL INSTRUCTION: When asked ANY question about a group, you MUST call the read_group_messages tool FIRST. DO NOT respond without calling the tool. DO NOT say you don't have access. The tool will fetch the messages for you.
+
+EXACT EXAMPLE - Follow this pattern:
+User asks: "מה ההודעה האחרונה באופירה נבון הסעות?"
+You MUST:
+1. Immediately call: read_group_messages(groupName: "אופירה נבון הסעות")
+2. Wait for tool response with messages array
+3. Find last message: messages[messages.length - 1] or the last item in the array
+4. Answer: "ההודעה האחרונה היא: [text] מאת [sender]"
+
+DO NOT skip step 1. DO NOT say you need access. CALL THE TOOL.
 
 You have access to the following tools:
 1. list_allowed_groups - List all groups you can access
@@ -70,33 +80,37 @@ You have access to the following tools:
 
 CAPABILITIES:
 You can answer questions such as:
-- "Who said what?" / "מי אמר מה?" - Use the sender field from each message to identify who said what
-- "How many messages are in the history?" / "כמה הודעות יש בהיסטוריה?" - Use the count field from the tool response
-- "Summarize the last messages" / "סכם את ההודעות האחרונות" - Use the messages array or formatted string to create a summary
-- "What was discussed?" / "על מה דיברו?" - Analyze the message content to identify topics
-- Any other questions about the group's message history
+- "מה ההודעה האחרונה ב-X?" / "What is the last message in X?" - Call read_group_messages, then return messages[messages.length-1] or the last item
+- "Who said what?" / "מי אמר מה?" - Call read_group_messages, then list each message with its sender
+- "How many messages?" / "כמה הודעות?" - Call read_group_messages, then return the count field
+- "Summarize the last messages" / "סכם את ההודעות האחרונות" - Call read_group_messages, then summarize the messages array
+- "What was discussed?" / "על מה דיברו?" - Call read_group_messages, then analyze topics
 
-WORKFLOW:
-1. IMMEDIATELY call the read_group_messages tool with the group name mentioned in the request
-2. If the group name is "טל" or similar, use that name in the tool call
-3. After receiving the tool response:
-   - For "who said what" questions: List each message with its sender
-   - For "how many messages" questions: Report the count from the tool response
-   - For summary questions: Analyze the messages array or formatted string and provide a concise summary
-   - For other questions: Use the message data to answer accurately
+MANDATORY WORKFLOW FOR EVERY QUESTION:
+Step 1: Extract the group name from the user's question (e.g., "אופירה נבון הסעות" from "מה ההודעה האחרונה באופירה נבון הסעות?")
+Step 2: IMMEDIATELY call read_group_messages tool with groupName parameter set to the extracted name
+Step 3: Wait for tool response
+Step 4: Use the tool response data to answer the question
+Step 5: NEVER skip Step 2 - always call the tool first
 
-IMPORTANT RULES:
-- ALWAYS call read_group_messages tool FIRST when asked about a group
-- Use the group name from the user's request (e.g., "טל" for group "טל")
-- The tool returns messages with sender, text, and timestamp - use all this information
-- If the tool returns messages, use them to answer the question accurately
-- If the tool returns an error, explain what happened but still try to help
-- Never say you don't have access without trying the tool first
-- Be specific: when asked "who said what", list the actual senders and their messages
+ABSOLUTE RULES:
+- NEVER respond without calling read_group_messages tool first
+- NEVER say "I don't have access" or "provide me messages" - you have the tool, use it!
+- If the group name is mentioned (like "אופירה נבון הסעות", "טל"), use that exact name in the tool call
+- The tool will return messages - use them to answer
+- If tool returns error, try with different variations of the group name or check available groups first
 
 Keep responses concise and helpful. Match the language of the user's question (Hebrew if asked in Hebrew, English if asked in English).`,
 			tools: [listGroupsTool, readMessagesTool],
 		});
+
+		// Log that tools are registered
+		console.log(
+			`GroupSummaryAgent: Created agent with ${allowedGroups.length} allowed groups`,
+		);
+		console.log(
+			`GroupSummaryAgent: Tools registered: list_allowed_groups, read_group_messages`,
+		);
 	}
 
 	/**
@@ -127,7 +141,7 @@ Keep responses concise and helpful. Match the language of the user's question (H
 			const availableGroups = this.messageHistoryFetcher
 				? this.messageHistoryFetcher.getAllowedGroups()
 				: [];
-			
+
 			console.log(
 				`GroupSummaryAgent: Available groups: ${availableGroups.length}`,
 			);
@@ -135,9 +149,7 @@ Keep responses concise and helpful. Match the language of the user's question (H
 				console.log(
 					`GroupSummaryAgent: Groups: ${availableGroups.map((g) => g.name).join(", ")}`,
 				);
-				const groupsList = availableGroups
-					.map((g) => `- ${g.name}`)
-					.join("\n");
+				const groupsList = availableGroups.map((g) => `- ${g.name}`).join("\n");
 				prompt = `${message}\n\nAvailable groups you can access:\n${groupsList}`;
 			} else {
 				console.warn(
@@ -169,13 +181,15 @@ Keep responses concise and helpful. Match the language of the user's question (H
 					for (const group of mentionedGroups) {
 						// Try to find group ID by name
 						const groupId =
-							group.id || this.messageHistoryFetcher.findGroupIdByName(group.name);
-						
+							group.id ||
+							this.messageHistoryFetcher.findGroupIdByName(group.name);
+
 						if (groupId) {
-							const history = await this.messageHistoryFetcher.fetchMessageHistory(
-								groupId,
-								50,
-							);
+							const history =
+								await this.messageHistoryFetcher.fetchMessageHistory(
+									groupId,
+									50,
+								);
 
 							if (history.length > 0) {
 								groupHistory = `\n\nMessage history from group "${group.name}":\n${this.messageHistoryFetcher.formatMessageHistory(history)}`;
@@ -234,7 +248,9 @@ Keep responses concise and helpful. Match the language of the user's question (H
 	 * Find groups mentioned in the message by matching against ALLOWED_CHAT_NAMES
 	 * Returns groups that match the allowed chat names
 	 */
-	private findMentionedGroups(message: string): Array<{ id: string; name: string }> {
+	private findMentionedGroups(
+		message: string,
+	): Array<{ id: string; name: string }> {
 		const mentionedGroups: Array<{ id: string; name: string }> = [];
 
 		if (this.config.allowedChatNames.length === 0) {
@@ -259,6 +275,4 @@ Keep responses concise and helpful. Match the language of the user's question (H
 
 		return mentionedGroups;
 	}
-
 }
-
