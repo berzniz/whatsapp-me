@@ -47,9 +47,12 @@ Always respond with a valid JSON object in this exact format:
 }`,
 		});
 
-		const groupSummarySubAgent = new Agent({
-			name: "Group Summary Sub-Agent",
-			instructions: `Read and summarize messages from WhatsApp groups specified in ALLOWED_CHAT_NAMES. Answer questions about what was discussed in those groups, provide summaries of recent conversations, and identify key topics or decisions.
+		// Use the GroupSummaryAgent's agent instance if available, otherwise create a simple one
+		const groupSummarySubAgent = this.groupSummaryAgent
+			? this.groupSummaryAgent.getAgent()
+			: new Agent({
+					name: "Group Summary Sub-Agent",
+					instructions: `Read and summarize messages from WhatsApp groups specified in ALLOWED_CHAT_NAMES. Answer questions about what was discussed in those groups, provide summaries of recent conversations, and identify key topics or decisions.
 
 When asked about a group or to summarize messages:
 - Use the provided message history to answer questions
@@ -58,7 +61,7 @@ When asked about a group or to summarize messages:
 - Identify key topics, decisions, or important information
 
 If asked about groups or to summarize messages from groups, use this agent.`,
-		});
+				});
 
 		// Create main router agent with handoffs
 		const handoffs = [chatSubAgent, eventSubAgent];
@@ -99,7 +102,7 @@ Analyze the user's message and delegate to the appropriate sub-agent. If the mes
 	): Promise<string | null> {
 		try {
 			console.log(`BotGroupAgent processing message: "${message}"`);
-			
+
 			// Run the router agent with the session
 			// The SDK will handle handoffs automatically based on the agent's instructions
 			const result = await run(this.routerAgent, message, {
@@ -109,7 +112,10 @@ Analyze the user's message and delegate to the appropriate sub-agent. If the mes
 			// Log the full result structure for debugging
 			try {
 				const resultStr = JSON.stringify(result, null, 2);
-				console.log(`BotGroupAgent result structure:`, resultStr.substring(0, 500));
+				console.log(
+					`BotGroupAgent result structure:`,
+					resultStr.substring(0, 500),
+				);
 			} catch (e) {
 				console.log(`BotGroupAgent result (cannot stringify):`, result);
 			}
@@ -133,9 +139,9 @@ Analyze the user's message and delegate to the appropriate sub-agent. If the mes
 					responseText = String(result.finalOutput);
 				}
 			}
-			
+
 			const trimmedResponse = responseText.trim() || null;
-			
+
 			console.log(`BotGroupAgent extracted response:`, {
 				responseText,
 				trimmedResponse,

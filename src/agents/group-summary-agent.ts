@@ -50,7 +50,7 @@ export class GroupSummaryAgent {
 		);
 
 		this.agent = new Agent({
-			name: "Group Summary Agent",
+			name: "Group Summary Sub-Agent",
 			instructions: `You are a helpful assistant that can read and summarize messages from WhatsApp groups.
 
 AVAILABLE GROUPS:
@@ -74,6 +74,13 @@ Always use the tools to get the most up-to-date information. If message history 
 Keep responses concise and helpful. Match the language of the user's question (Hebrew if asked in Hebrew, English if asked in English).`,
 			tools: [listGroupsTool, readMessagesTool],
 		});
+	}
+
+	/**
+	 * Get the underlying Agent instance for use in handoffs
+	 */
+	public getAgent(): Agent {
+		return this.agent;
 	}
 
 	/**
