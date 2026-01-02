@@ -57,9 +57,21 @@ export class OpenAIService {
 
 	/**
 	 * Update socket reference (needed when connection is established)
+	 * Also passes additional params for late initialization of GroupSummaryAgent
 	 */
-	public setSocket(socket: WASocketType | null): void {
-		this.router.setSocket(socket);
+	public setSocket(
+		socket: WASocketType | null,
+		groupManager?: GroupManager,
+		messageStore?: MessageStore | null,
+		whatsappAdapter?: WhatsAppAdapter,
+	): void {
+		this.router.setSocket(
+			socket,
+			groupManager,
+			this, // Pass self as OpenAIService
+			messageStore || null,
+			whatsappAdapter,
+		);
 	}
 
 	/**

@@ -1,103 +1,103 @@
-import { Agent, run } from "@openai/agents";
+import { Agent, run, type Tool } from "@openai/agents";
 import type { Session } from "@openai/agents";
 import type { WhatsAppAdapter } from "./whatsapp-adapter.js";
 import type { GroupSummaryAgent } from "./group-summary-agent.js";
 
 /**
- * Main agent for BOT_GROUP_NAME that delegates to sub-agents
- * Uses SDK handoffs mechanism to route to specialized agents
+ * Main agent for BOT_GROUP_NAME that handles all bot interactions
+ * Uses a single agent with tools for group summary functionality
  */
 export class BotGroupAgent {
-	private routerAgent: Agent;
+	private mainAgent: Agent;
 	private whatsappAdapter: WhatsAppAdapter | null;
-	private targetGroupId: string | null;
 	private groupSummaryAgent: GroupSummaryAgent | null;
+	private groupSummaryTools: Tool[] = [];
 
 	constructor(
 		whatsappAdapter?: WhatsAppAdapter,
-		targetGroupId?: string | null,
+		_targetGroupId?: string | null, // Kept for API compatibility
 		groupSummaryAgent?: GroupSummaryAgent | null,
 	) {
 		this.whatsappAdapter = whatsappAdapter || null;
-		this.targetGroupId = targetGroupId || null;
 		this.groupSummaryAgent = groupSummaryAgent || null;
 
-		// Create sub-agents for handoffs - these are the actual Agent instances
-		const chatSubAgent = new Agent({
-			name: "Chat Sub-Agent",
-			handoffDescription:
-				"Handles general conversation, questions, greetings, and casual chat. Use for any message that is not about events, calendars, or group message summaries.",
-			instructions:
-				"Handle general conversation and chat queries in a WhatsApp group. Provide helpful, concise responses. Match the language of the user's message.",
-		});
-
-		const eventSubAgent = new Agent({
-			name: "Event Detection Sub-Agent",
-			handoffDescription:
-				"Handles event-related queries: detecting events, extracting event details, calendar information, meetings, appointments, dates, and times.",
-			instructions: `Detect and extract event information from messages. Analyze WhatsApp messages for event information. Look for actual events (meetings, parties, gatherings) with date references.
-
-Always respond with a valid JSON object in this exact format:
-{
-  "isEvent": true/false,
-  "summary": "Brief summary",
-  "title": "Event title",
-  "date": "Date",
-  "time": "Time",
-  "location": "Location",
-  "description": "Description",
-  "startDateISO": "ISO format",
-  "endDateISO": "ISO format"
-}`,
-		});
-
-		// Use the GroupSummaryAgent's agent instance if available, otherwise create a simple one
-		const groupSummarySubAgent = this.groupSummaryAgent
-			? this.groupSummaryAgent.getAgent()
-			: new Agent({
-					name: "Group Summary Sub-Agent",
-					handoffDescription:
-						"Handles questions about WhatsApp groups, reading messages, summarizing conversations, 'who said what', 'how many messages', and any group-related queries.",
-					instructions: `Read and summarize messages from WhatsApp groups specified in ALLOWED_CHAT_NAMES. Answer questions about what was discussed in those groups, provide summaries of recent conversations, and identify key topics or decisions.
-
-When asked about a group or to summarize messages:
-- Use the provided message history to answer questions
-- Provide concise summaries of recent conversations
-- Answer specific questions about what was discussed
-- Identify key topics, decisions, or important information
-
-If asked about groups or to summarize messages from groups, use this agent.`,
-				});
-
-		// Create main router agent with handoffs
-		const handoffs = [chatSubAgent, eventSubAgent];
-		if (groupSummarySubAgent) {
-			handoffs.push(groupSummarySubAgent);
+		// Get tools from GroupSummaryAgent if available
+		if (this.groupSummaryAgent) {
+			const summaryAgent = this.groupSummaryAgent.getAgent();
+			this.groupSummaryTools = summaryAgent.tools || [];
+			console.log(
+				`BotGroupAgent: Initialized with ${this.groupSummaryTools.length} group summary tools`,
+			);
+		} else {
+			console.warn(
+				`BotGroupAgent: GroupSummaryAgent not available, group summary features will be limited`,
+			);
 		}
 
-		this.routerAgent = new Agent({
+		// Build instructions based on available tools
+		const hasGroupTools = this.groupSummaryTools.length > 0;
+		const groupInstructions = hasGroupTools
+			? `
+FOR GROUP SUMMARY QUESTIONS (messages about groups, "what was said", summaries):
+- You have access to tools to read messages from WhatsApp groups
+- ALWAYS use the read_group_messages tool when asked about a group's messages
+- First call the tool to get the messages, then answer based on the results
+- DO NOT say you don't have access - USE THE TOOLS!`
+			: `
+FOR GROUP SUMMARY QUESTIONS: Group summary tools are not available yet. Ask the user to try again later.`;
+
+		// Create a single agent with tools that handles all requests
+		this.mainAgent = new Agent({
 			name: "Bot Group Agent",
-			instructions: `You are a router that delegates messages to specialized sub-agents. Your ONLY job is to identify which sub-agent should handle the message and hand off to them. DO NOT respond to the user yourself - let the sub-agent respond.
+			instructions: `You are a helpful WhatsApp bot assistant. You can handle different types of requests:
 
-ROUTING RULES:
-1. For questions about WhatsApp groups, summarizing messages, reading messages, "who said what", "how many messages", or any group-related queries:
-   → Hand off to "Group Summary Sub-Agent" and STOP. Do not respond yourself.
+1. GENERAL CHAT: Answer questions, have conversations, provide helpful information
+2. EVENT DETECTION: When asked to detect events, analyze for meetings, parties, gatherings with dates
+${groupInstructions}
 
-2. For event-related queries (detecting events, extracting event details, calendar information, meetings, dates):
-   → Hand off to "Event Detection Sub-Agent" and STOP. Do not respond yourself.
+LANGUAGE: Always respond in the same language as the user's message (Hebrew if Hebrew, English if English).
 
-3. For general conversation, questions, and chat:
-   → Hand off to "Chat Sub-Agent" and STOP. Do not respond yourself.
+Keep responses concise and helpful. Match the casual tone of WhatsApp chat.`,
+			tools: this.groupSummaryTools,
+		});
+	}
 
-CRITICAL: After handing off, DO NOT generate your own response. The sub-agent will handle everything. Your handoff IS your complete action - do not add commentary, do not explain, do not respond.`,
-			handoffs: handoffs,
+	/**
+	 * Update the agent with new tools (called when GroupSummaryAgent becomes available)
+	 */
+	public updateGroupSummaryAgent(groupSummaryAgent: GroupSummaryAgent): void {
+		this.groupSummaryAgent = groupSummaryAgent;
+		const summaryAgent = groupSummaryAgent.getAgent();
+		this.groupSummaryTools = summaryAgent.tools || [];
+		console.log(
+			`BotGroupAgent: Updated with ${this.groupSummaryTools.length} group summary tools`,
+		);
+
+		// Recreate main agent with the new tools
+		this.mainAgent = new Agent({
+			name: "Bot Group Agent",
+			instructions: `You are a helpful WhatsApp bot assistant. You can handle different types of requests:
+
+1. GENERAL CHAT: Answer questions, have conversations, provide helpful information
+2. EVENT DETECTION: When asked to detect events, analyze for meetings, parties, gatherings with dates
+3. GROUP SUMMARY: When asked about WhatsApp group messages, use the available tools
+
+FOR GROUP SUMMARY QUESTIONS (messages about groups, "what was said", summaries):
+- You have access to tools to read messages from WhatsApp groups
+- ALWAYS use the read_group_messages tool when asked about a group's messages
+- First call the tool to get the messages, then answer based on the results
+- DO NOT say you don't have access - USE THE TOOLS!
+
+LANGUAGE: Always respond in the same language as the user's message (Hebrew if Hebrew, English if English).
+
+Keep responses concise and helpful. Match the casual tone of WhatsApp chat.`,
+			tools: this.groupSummaryTools,
 		});
 	}
 
 	/**
 	 * Process a message and get a response
-	 * The agent will automatically hand off to appropriate sub-agents via SDK handoffs
-	 * Optionally sends the response back to WhatsApp if adapter is configured
+	 * The agent uses tools directly instead of handoffs for reliability
 	 */
 	public async processMessage(
 		message: string,
@@ -109,43 +109,26 @@ CRITICAL: After handing off, DO NOT generate your own response. The sub-agent wi
 	): Promise<string | null> {
 		try {
 			console.log(`BotGroupAgent processing message: "${message}"`);
+			console.log(
+				`BotGroupAgent has ${this.groupSummaryTools.length} tools available`,
+			);
 
-			// Run the router agent with the session
-			// The SDK will handle handoffs automatically based on the agent's instructions
-			const result = await run(this.routerAgent, message, {
+			// Run the main agent with the session
+			// maxTurns needs to be high enough for: tool call + tool result + response
+			const result = await run(this.mainAgent, message, {
 				session,
+				maxTurns: 10, // Allow enough turns for tool calls
 			});
 
-			// Log the full result structure for debugging
-			try {
-				const resultStr = JSON.stringify(result, null, 2);
-				console.log(
-					`BotGroupAgent result structure:`,
-					resultStr.substring(0, 1000),
-				);
-			} catch (e) {
-				console.log(`BotGroupAgent result (cannot stringify):`, result);
-			}
-			console.log(`BotGroupAgent result keys:`, Object.keys(result));
-			console.log(`BotGroupAgent finalOutput:`, result.finalOutput);
-			console.log(`BotGroupAgent finalOutput type:`, typeof result.finalOutput);
+			// Log result summary
+			const state = result.state as unknown as Record<string, unknown>;
+			console.log(`BotGroupAgent completed:`, {
+				turns: state?.currentTurn,
+				agent: (state?.currentAgent as { name?: string })?.name,
+				hasOutput: !!result.finalOutput,
+			});
 
-			// Log state information if available
-			if (result.state) {
-				const state = result.state as unknown as Record<string, unknown>;
-				console.log(`BotGroupAgent state.currentAgent:`, state.currentAgent);
-				console.log(`BotGroupAgent state.currentTurn:`, state.currentTurn);
-				if (state.modelResponses) {
-					console.log(
-						`BotGroupAgent state.modelResponses count:`,
-						Array.isArray(state.modelResponses)
-							? state.modelResponses.length
-							: "not an array",
-					);
-				}
-			}
-
-			// Extract the response text - try different ways to access it
+			// Extract the response text
 			let responseText = "";
 			if (result.finalOutput) {
 				if (typeof result.finalOutput === "string") {
@@ -164,12 +147,6 @@ CRITICAL: After handing off, DO NOT generate your own response. The sub-agent wi
 
 			const trimmedResponse = responseText.trim() || null;
 
-			console.log(`BotGroupAgent extracted response:`, {
-				responseText,
-				trimmedResponse,
-				length: trimmedResponse?.length || 0,
-			});
-
 			// Send response back if configured
 			if (trimmedResponse && context?.sendResponse && context.chatId) {
 				if (this.whatsappAdapter) {
@@ -184,7 +161,6 @@ CRITICAL: After handing off, DO NOT generate your own response. The sub-agent wi
 						);
 					} catch (error) {
 						console.error("Error sending bot group response:", error);
-						// Still return the response even if sending failed
 					}
 				} else {
 					console.warn(

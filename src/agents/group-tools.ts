@@ -57,36 +57,24 @@ export function createReadGroupMessagesTool(
 	return tool({
 		name: "read_group_messages",
 		description:
-			"Read recent messages from a specific WhatsApp group. This tool MUST be called when asked about a group's message history. Provide either the group name (e.g., 'טל') or group ID. Returns: messages array (with text, sender, timestamp), count (total messages), formatted string, and groupName. Use this data to answer questions like 'who said what?', 'how many messages?', or to summarize conversations.",
+			"Read recent messages from a specific WhatsApp group. This tool MUST be called when asked about a group's message history. Provide the group name to fetch messages. Returns: messages array (with text, sender, timestamp), count (total messages), formatted string, and groupName. Use this data to answer questions like 'who said what?', 'how many messages?', or to summarize conversations.",
 		parameters: z.object({
 			groupName: z
 				.string()
-				.optional()
 				.describe(
-					"The name of the group to read messages from (e.g., 'טל' for group named 'טל'). Extract this from the user's request.",
-				),
-			groupId: z
-				.string()
-				.optional()
-				.describe(
-					"The WhatsApp group ID (e.g., '1234567890@g.us'). Use this if you know the exact ID.",
+					"The name of the group to read messages from (e.g., 'אופירה נבון הסעות'). Extract this from the user's request.",
 				),
 			limit: z
 				.number()
 				.int()
 				.min(1)
 				.max(100)
-				.optional()
 				.default(50)
 				.describe(
 					"Maximum number of messages to fetch (1-100, default: 50). Use a higher limit if asked about many messages.",
 				),
 		}),
-		execute: async (args: {
-			groupName?: string;
-			groupId?: string;
-			limit?: number;
-		}) => {
+		execute: async (args: { groupName: string; limit: number }) => {
 			console.log(`[read_group_messages] Tool called with args:`, args);
 
 			if (!messageHistoryFetcher) {
@@ -101,46 +89,28 @@ export function createReadGroupMessagesTool(
 			}
 
 			try {
-				let groupId = args.groupId || undefined;
-
-				// If groupName is provided but groupId is not, try to find it
-				if (!groupId && args.groupName) {
-					console.log(
-						`[read_group_messages] Looking for group by name: "${args.groupName}"`,
-					);
-					const foundId = messageHistoryFetcher.findGroupIdByName(
-						args.groupName,
-					);
-					if (!foundId) {
-						const availableGroups = messageHistoryFetcher.getAllowedGroups();
-						console.log(
-							`[read_group_messages] Group not found. Available groups:`,
-							availableGroups.map((g) => g.name),
-						);
-						return {
-							success: false,
-							error: `Group "${args.groupName}" not found. Available groups: ${availableGroups
-								.map((g) => g.name)
-								.join(", ")}`,
-							messages: [],
-						};
-					}
-					console.log(
-						`[read_group_messages] Found group ID: ${foundId} for name "${args.groupName}"`,
-					);
-					groupId = foundId;
-				}
-
+				// Find group ID by name
+				console.log(
+					`[read_group_messages] Looking for group by name: "${args.groupName}"`,
+				);
+				const groupId = messageHistoryFetcher.findGroupIdByName(args.groupName);
 				if (!groupId) {
-					console.error(
-						`[read_group_messages] No groupId provided and couldn't find by name`,
+					const availableGroups = messageHistoryFetcher.getAllowedGroups();
+					console.log(
+						`[read_group_messages] Group not found. Available groups:`,
+						availableGroups.map((g) => g.name),
 					);
 					return {
 						success: false,
-						error: "Either groupName or groupId must be provided",
+						error: `Group "${args.groupName}" not found. Available groups: ${availableGroups
+							.map((g) => g.name)
+							.join(", ")}`,
 						messages: [],
 					};
 				}
+				console.log(
+					`[read_group_messages] Found group ID: ${groupId} for name "${args.groupName}"`,
+				);
 
 				const limit = args.limit || 50;
 				console.log(

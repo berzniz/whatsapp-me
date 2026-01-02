@@ -22,6 +22,7 @@ export class WhatsAppClient {
 	private openaiService: OpenAIService;
 	private eventDeduplicationService: EventDeduplicationService;
 	private messageStore: MessageStore;
+	private whatsappAdapter: WhatsAppAdapterImpl;
 
 	constructor() {
 		this.config = new WhatsAppConfig();
@@ -35,8 +36,8 @@ export class WhatsAppClient {
 			`Message store initialized with ${this.messageStore.getTotalMessageCount()} total messages`,
 		);
 
-		// Create WhatsApp adapter for agents
-		const whatsappAdapter = new WhatsAppAdapterImpl(this.messageSender);
+		// Create WhatsApp adapter for agents (store for later use in socket updates)
+		this.whatsappAdapter = new WhatsAppAdapterImpl(this.messageSender);
 
 		// Initialize OpenAI service with shared config, adapter, deduplication service, socket, groupManager, and messageStore
 		// Using shared config ensures botGroupId updates are reflected
@@ -44,7 +45,7 @@ export class WhatsAppClient {
 		// MessageStore provides persistent message storage
 		this.openaiService = new OpenAIService(
 			this.config,
-			whatsappAdapter,
+			this.whatsappAdapter,
 			this.eventDeduplicationService,
 			null, // Socket will be set later via setSocket
 			this.groupManager,
@@ -95,7 +96,13 @@ export class WhatsAppClient {
 		this.messageHandler.setSocket(socket);
 		this.eventHandler.setSocket(socket);
 		this.messageSender.setSocket(socket);
-		this.openaiService.setSocket(socket); // Update socket for message history fetcher
+		// Update socket and pass additional params for late initialization of GroupSummaryAgent
+		this.openaiService.setSocket(
+			socket,
+			this.groupManager,
+			this.messageStore,
+			this.whatsappAdapter,
+		);
 		// Don't set ready here - it will be set when connection actually opens
 		// via the connectionOpenHandler
 	}

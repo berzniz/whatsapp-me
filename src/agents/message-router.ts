@@ -77,10 +77,46 @@ export class MessageRouterService {
 
 	/**
 	 * Update socket reference (needed when connection is established)
+	 * Also initializes GroupSummaryAgent if not yet available
 	 */
-	public setSocket(socket: WASocketType | null): void {
+	public setSocket(
+		socket: WASocketType | null,
+		groupManager?: GroupManager,
+		openaiService?: OpenAIService | null,
+		messageStore?: MessageStore | null,
+		whatsappAdapter?: WhatsAppAdapter,
+	): void {
 		if (this.messageHistoryFetcher) {
 			this.messageHistoryFetcher.setSocket(socket);
+		} else if (socket && groupManager) {
+			// Late initialization of message history fetcher
+			this.messageHistoryFetcher = new MessageHistoryFetcher(
+				socket,
+				this.config,
+				groupManager,
+				openaiService || null,
+				messageStore || null,
+			);
+			console.log(
+				`MessageRouter: Late-initialized MessageHistoryFetcher with socket`,
+			);
+		}
+
+		// Late initialization of GroupSummaryAgent if not yet available
+		if (!this.groupSummaryAgent && this.messageHistoryFetcher && groupManager) {
+			this.groupSummaryAgent = new GroupSummaryAgent(
+				whatsappAdapter || null,
+				this.messageHistoryFetcher,
+				this.config,
+				groupManager,
+			);
+			console.log(`MessageRouter: Late-initialized GroupSummaryAgent`);
+
+			// Update BotGroupAgent with the new GroupSummaryAgent
+			this.botGroupAgent.updateGroupSummaryAgent(this.groupSummaryAgent);
+			console.log(
+				`MessageRouter: Updated BotGroupAgent with GroupSummaryAgent tools`,
+			);
 		}
 	}
 
