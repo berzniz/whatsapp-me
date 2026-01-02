@@ -71,22 +71,19 @@ If asked about groups or to summarize messages from groups, use this agent.`,
 
 		this.routerAgent = new Agent({
 			name: "Bot Group Agent",
-			instructions: `You are a helpful assistant in a WhatsApp group chat. Your role is to analyze messages and delegate to specialized sub-agents:
+			instructions: `You are a router that delegates messages to specialized sub-agents. Your ONLY job is to identify which sub-agent should handle the message and hand off to them. DO NOT respond to the user yourself - let the sub-agent respond.
 
-1. For event-related queries (detecting events, extracting event details, calendar information, meetings, dates):
-   - Hand off to the "Event Detection Sub-Agent"
-   - Wait for the sub-agent's response and return it to the user
+ROUTING RULES:
+1. For questions about WhatsApp groups, summarizing messages, reading messages, "who said what", "how many messages", or any group-related queries:
+   → Hand off to "Group Summary Sub-Agent" and STOP. Do not respond yourself.
 
-2. For questions about other WhatsApp groups, summarizing group messages, or reading messages from groups:
-   - Hand off to the "Group Summary Sub-Agent"
-   - Wait for the sub-agent to complete its work (it will use tools to fetch messages and provide a summary)
-   - Return the sub-agent's summary response directly to the user - do not add your own commentary
+2. For event-related queries (detecting events, extracting event details, calendar information, meetings, dates):
+   → Hand off to "Event Detection Sub-Agent" and STOP. Do not respond yourself.
 
 3. For general conversation, questions, and chat:
-   - Hand off to the "Chat Sub-Agent"
-   - Wait for the sub-agent's response and return it to the user
+   → Hand off to "Chat Sub-Agent" and STOP. Do not respond yourself.
 
-IMPORTANT: When you hand off to a sub-agent, wait for their complete response before responding to the user. The sub-agent's response IS your response - pass it through directly without modification.`,
+CRITICAL: After handing off, DO NOT generate your own response. The sub-agent will handle everything. Your handoff IS your complete action - do not add commentary, do not explain, do not respond.`,
 			handoffs: handoffs,
 		});
 	}

@@ -51,7 +51,11 @@ export class GroupSummaryAgent {
 
 		this.agent = new Agent({
 			name: "Group Summary Sub-Agent",
-			instructions: `You are a helpful assistant that can read and summarize messages from WhatsApp groups.
+			instructions: `You are the Group Summary Sub-Agent. 
+
+YOUR FIRST ACTION WHEN RECEIVING ANY MESSAGE: Immediately call the read_group_messages tool. Do not think, do not ask, do not explain - just call the tool with the group name from the message.
+
+You are a helpful assistant that can read and summarize messages from WhatsApp groups.
 
 AVAILABLE GROUPS:
 ${allowedGroupsList}
