@@ -15,24 +15,20 @@ import type { ChatInfo } from "./types.js";
 export class MessageHandler {
 	private socket: WASocketType | null;
 	private openaiService: OpenAIService;
-	private eventDeduplicationService: EventDeduplicationService;
 	private groupManager: GroupManager;
-	private messageSender: MessageSender;
 	private config: WhatsAppConfig;
 
 	constructor(
 		socket: WASocketType | null,
 		openaiService: OpenAIService,
-		eventDeduplicationService: EventDeduplicationService,
+		_eventDeduplicationService: EventDeduplicationService,
 		groupManager: GroupManager,
-		messageSender: MessageSender,
+		_messageSender: MessageSender,
 		config: WhatsAppConfig,
 	) {
 		this.socket = socket;
 		this.openaiService = openaiService;
-		this.eventDeduplicationService = eventDeduplicationService;
 		this.groupManager = groupManager;
-		this.messageSender = messageSender;
 		this.config = config;
 	}
 
@@ -85,47 +81,9 @@ export class MessageHandler {
 			// Get chat and contact information
 			const chatInfo = await this.getChatInfo(chatId, message, isGroup);
 
-			// Check if this is a message from the bot group
-			if (
-				isGroup &&
-				this.config.botGroupId &&
-				chatId === this.config.botGroupId
-			) {
-				// Skip bot responses (messages starting with robot emoji) to avoid loops
-				if (messageText.startsWith("🤖")) {
-					return;
-				}
-				// Handle bot group messages differently
-				console.log(`\n--------------------------------`);
-				console.log(
-					`[${timestamp}] [${chatInfo.chatName}] ${chatInfo.contactName}: ${messageText}`,
-				);
-				console.log(`Bot group message detected, getting OpenAI response...`);
-
-				// Add message to history for this chat
-				this.openaiService.addMessageToHistory(chatId, messageText);
-
-				// Get response from OpenAI
-				const response = await this.openaiService.getChatResponse(
-					chatId,
-					messageText,
-				);
-
-				if (response) {
-					// Send response back to bot group with robot emoji
-					const responseWithEmoji = `🤖 ${response}`;
-					await this.messageSender.sendMessageToGroup(
-						this.config.botGroupId,
-						responseWithEmoji,
-					);
-					console.log(`Sent bot response to bot group`);
-				} else {
-					console.warn(
-						`Failed to get response from OpenAI for bot group message`,
-					);
-				}
-
-				return; // Don't process as event detection
+			// Skip bot responses (messages starting with robot emoji) to avoid loops
+			if (messageText.startsWith("🤖")) {
+				return;
 			}
 
 			// Log the message
@@ -137,79 +95,53 @@ export class MessageHandler {
 			// Add message to history for this chat
 			this.openaiService.addMessageToHistory(chatId, messageText);
 
-			// Analyze the message for events
-			console.log(`Analyzing message for events...`);
+			// Determine if this is a bot group message
+			const isBotGroup =
+				isGroup && this.config.botGroupId && chatId === this.config.botGroupId;
 
-			const analysis = await this.openaiService.analyzeMessage(
-				chatId,
-				messageText,
-				chatInfo.chatName,
-				chatInfo.contactName,
-			);
-
-			// Log analysis result
-			if (analysis.isEvent) {
-				console.log(`✓ Event detected: ${analysis.title || "Untitled"}`);
+			if (isBotGroup) {
+				console.log(`Bot group message detected, routing to agent...`);
 			} else {
-				console.log(`✗ No event detected in message`);
+				console.log(`Analyzing message for events...`);
 			}
 
-			if (analysis.isEvent && analysis.summary) {
-				console.log(`Event detected! Summary: ${analysis.summary}`);
-				console.log(`Event details:`, {
-					title: analysis.title,
-					date: analysis.date,
-					time: analysis.time,
-					location: analysis.location,
-					description: analysis.description,
-					startDateISO: analysis.startDateISO,
-					endDateISO: analysis.endDateISO,
-				});
-
-				// Check for duplicate events before processing
-				const eventHashData = {
-					title: analysis.title,
-					date: analysis.date,
-					time: analysis.time,
-					location: analysis.location,
-				};
-
-				const shouldProcess =
-					this.eventDeduplicationService.shouldProcessEvent(eventHashData);
-
-				if (!shouldProcess) {
-					console.log("Event is duplicate, skipping notification");
-					return; // Exit early for duplicate events
-				}
-
-				// If we found the target group, send the summary
-				if (this.config.targetGroupId) {
-					const sourceChatInfo = isGroup
-						? `Group: ${chatInfo.chatName}`
-						: `Contact: ${chatInfo.contactName}`;
-
-					// Send unified message with summary and calendar attachment
-					if (analysis.title && analysis.startDateISO) {
-						await this.messageSender.sendUnifiedEventMessage(
-							this.config.targetGroupId,
-							analysis,
-							sourceChatInfo,
-						);
-					} else {
-						// Fallback to text-only message if no complete event details
-						const summaryMessage = `Event Summary:\n\n${analysis.summary}\n\nSource: ${sourceChatInfo}`;
-						await this.messageSender.sendMessageToGroup(
-							this.config.targetGroupId,
-							summaryMessage,
-						);
-					}
+			// Route message to appropriate agent
+			// Agents will handle their own responses via WhatsApp adapter
+			if (isBotGroup) {
+				const response = await this.openaiService.getChatResponse(
+					chatId,
+					messageText,
+					chatInfo.chatName,
+				);
+				if (response) {
 					console.log(
-						`Single event message with ICS attachment sent to target group (ID: ${this.config.targetGroupId})`,
+						`Bot response generated: ${response.substring(0, 100)}...`,
 					);
 				} else {
-					console.log(
-						`Target group ${this.config.targetGroupName ? `"${this.config.targetGroupName}"` : ""} not found yet. Event summary not sent.`,
-					);
+					console.warn("Bot did not generate a response");
+				}
+			} else {
+				const analysis = await this.openaiService.analyzeMessage(
+					chatId,
+					messageText,
+					chatInfo.chatName,
+					chatInfo.contactName,
+				);
+
+				// Log analysis result
+				if (analysis.isEvent) {
+					console.log(`✓ Event detected: ${analysis.title || "Untitled"}`);
+					console.log(`Event details:`, {
+						title: analysis.title,
+						date: analysis.date,
+						time: analysis.time,
+						location: analysis.location,
+						description: analysis.description,
+						startDateISO: analysis.startDateISO,
+						endDateISO: analysis.endDateISO,
+					});
+				} else {
+					console.log(`✗ No event detected in message`);
 				}
 			}
 		} catch (error) {

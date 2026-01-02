@@ -7,6 +7,7 @@ import { EventHandler } from "./event-handler.js";
 import { MessageHandler } from "./message-handler.js";
 import { MessageSender } from "./message-sender.js";
 import { SyncService } from "./sync-service.js";
+import { WhatsAppAdapterImpl } from "../agents/whatsapp-adapter-impl.js";
 import type { WASocketType } from "./types.js";
 
 export class WhatsAppClient {
@@ -22,10 +23,21 @@ export class WhatsAppClient {
 
 	constructor() {
 		this.config = new WhatsAppConfig();
-		this.openaiService = new OpenAIService();
 		this.eventDeduplicationService = new EventDeduplicationService();
 		this.groupManager = new GroupManager(this.config);
 		this.messageSender = new MessageSender();
+
+		// Create WhatsApp adapter for agents
+		const whatsappAdapter = new WhatsAppAdapterImpl(this.messageSender);
+
+		// Initialize OpenAI service with shared config, adapter and deduplication service
+		// Using shared config ensures botGroupId updates are reflected
+		this.openaiService = new OpenAIService(
+			this.config,
+			whatsappAdapter,
+			this.eventDeduplicationService,
+		);
+
 		this.connectionManager = new ConnectionManager(this.config);
 		this.syncService = new SyncService(null, this.groupManager, this.config);
 		this.messageHandler = new MessageHandler(
