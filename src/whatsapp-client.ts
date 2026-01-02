@@ -1,20 +1,20 @@
 import makeWASocket, {
-	DisconnectReason,
 	useMultiFileAuthState,
-	WAMessageKey,
 	getContentType,
 	isJidGroup,
 	jidNormalizedUser,
-	WAMessage,
 	Browsers,
+	DisconnectReason,
+	type WAMessageKey,
+	type WAMessage,
+	type BaileysEventMap,
 } from "@whiskeysockets/baileys";
-import { Boom } from "@hapi/boom";
+import type { Boom } from "@hapi/boom";
 import * as fs from "fs";
-import * as path from "path";
 import * as qrcode from "qrcode-terminal";
 import NodeCache from "node-cache";
-import { OpenAIService, EventDetails } from "./openai-service";
-import { EventDeduplicationService } from "./event-deduplication";
+import { OpenAIService, type EventDetails } from "./openai-service.js";
+import { EventDeduplicationService } from "./event-deduplication.js";
 
 type WASocketType = ReturnType<typeof makeWASocket>;
 
@@ -91,9 +91,9 @@ export class WhatsAppClient {
 				fireInitQueries: true,
 				generateHighQualityLinkPreview: false,
 				cachedGroupMetadata: async (jid) => this.groupCache.get(jid),
-				getMessage: async (key: WAMessageKey) => {
-					// Return empty message for now - could be enhanced with message store
-					return { conversation: "" } as any;
+				getMessage: async (_key: WAMessageKey) => {
+					// Return undefined for now - could be enhanced with message store
+					return undefined;
 				},
 			});
 
@@ -108,142 +108,161 @@ export class WhatsAppClient {
 		if (!this.socket) return;
 
 		// Handle connection updates
-		this.socket.ev.on("connection.update", async (update: any) => {
-			const { connection, lastDisconnect, qr } = update;
+		this.socket.ev.on(
+			"connection.update",
+			async (update: BaileysEventMap["connection.update"]) => {
+				const { connection, lastDisconnect, qr } = update;
 
-			if (qr) {
-				console.log(
-					"QR Code received. Please scan with your WhatsApp mobile app.",
-				);
-				qrcode.generate(qr, { small: true });
-			}
-
-			if (connection === "close") {
-				this.connectionState = "close";
-				this.isReady = false;
-
-				const shouldReconnect =
-					(lastDisconnect?.error as Boom)?.output?.statusCode !==
-					DisconnectReason.loggedOut;
-				console.log(
-					"Connection closed due to:",
-					lastDisconnect?.error,
-					", reconnecting:",
-					shouldReconnect,
-				);
-
-				if (
-					shouldReconnect &&
-					this.shouldReconnect &&
-					this.reconnectAttempts < this.maxReconnectAttempts
-				) {
-					this.reconnectAttempts++;
+				if (qr) {
 					console.log(
-						`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
+						"QR Code received. Please scan with your WhatsApp mobile app.",
 					);
-
-					// Wait before reconnecting
-					await new Promise((resolve) => setTimeout(resolve, 5000));
-					await this.createSocket();
-				} else if (!shouldReconnect) {
-					console.log(
-						"Logged out. Please restart the application and scan QR code again.",
-					);
-				} else {
-					console.log(
-						"Max reconnection attempts reached. Please restart the application.",
-					);
+					qrcode.generate(qr, { small: true });
 				}
-			} else if (connection === "open") {
-				this.connectionState = "open";
-				this.isReady = true;
-				this.reconnectAttempts = 0;
-				console.log("WhatsApp connection opened successfully!");
 
-				// Find the target group when connection is established
-				await this.findTargetGroup();
-			} else if (connection === "connecting") {
-				this.connectionState = "connecting";
-				console.log("Connecting to WhatsApp...");
-			}
-		});
+				if (connection === "close") {
+					this.connectionState = "close";
+					this.isReady = false;
+
+					const shouldReconnect =
+						(lastDisconnect?.error as Boom)?.output?.statusCode !==
+						DisconnectReason.loggedOut;
+					console.log(
+						"Connection closed due to:",
+						lastDisconnect?.error,
+						", reconnecting:",
+						shouldReconnect,
+					);
+
+					if (
+						shouldReconnect &&
+						this.shouldReconnect &&
+						this.reconnectAttempts < this.maxReconnectAttempts
+					) {
+						this.reconnectAttempts++;
+						console.log(
+							`Attempting to reconnect... (${this.reconnectAttempts}/${this.maxReconnectAttempts})`,
+						);
+
+						// Wait before reconnecting
+						await new Promise((resolve) => setTimeout(resolve, 5000));
+						await this.createSocket();
+					} else if (!shouldReconnect) {
+						console.log(
+							"Logged out. Please restart the application and scan QR code again.",
+						);
+					} else {
+						console.log(
+							"Max reconnection attempts reached. Please restart the application.",
+						);
+					}
+				} else if (connection === "open") {
+					this.connectionState = "open";
+					this.isReady = true;
+					this.reconnectAttempts = 0;
+					console.log("WhatsApp connection opened successfully!");
+
+					// Find the target group when connection is established
+					await this.findTargetGroup();
+				} else if (connection === "connecting") {
+					this.connectionState = "connecting";
+					console.log("Connecting to WhatsApp...");
+				}
+			},
+		);
 
 		// Handle credential updates
 		this.socket.ev.on("creds.update", saveCreds);
 
 		// Handle incoming messages
-		this.socket.ev.on("messages.upsert", async (messageUpdate: any) => {
-			const { messages, type } = messageUpdate;
+		this.socket.ev.on(
+			"messages.upsert",
+			async (messageUpdate: BaileysEventMap["messages.upsert"]) => {
+				const { messages, type } = messageUpdate;
 
-			if (type !== "notify") return;
+				if (type !== "notify") return;
 
-			for (const message of messages) {
-				await this.handleIncomingMessage(message);
-			}
-		});
+				for (const message of messages) {
+					await this.handleIncomingMessage(message);
+				}
+			},
+		);
 
 		// Handle group updates
-		this.socket.ev.on("groups.update", async (updates: any[]) => {
-			for (const update of updates) {
-				// Update group metadata cache
+		this.socket.ev.on(
+			"groups.update",
+			async (updates: BaileysEventMap["groups.update"]) => {
+				for (const update of updates) {
+					// Update group metadata cache
+					if (!update.id) continue;
+					try {
+						if (!this.socket) return;
+						const metadata = await this.socket.groupMetadata(update.id);
+						this.groupCache.set(update.id, metadata);
+						console.log(
+							`Updated group metadata cache for: ${metadata.subject || update.id}`,
+						);
+					} catch (error) {
+						console.error(
+							`Failed to update group metadata cache for ${update.id}:`,
+							error,
+						);
+					}
+
+					if (update.subject && !this.targetGroupId && update.id) {
+						// Check if this is our target group (only if not already configured from env)
+						if (update.subject === this.targetGroupName) {
+							this.targetGroupId = update.id;
+							console.log(
+								`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`,
+							);
+						}
+					}
+				}
+			},
+		);
+
+		// Handle group participants update
+		this.socket.ev.on(
+			"group-participants.update",
+			async (event: BaileysEventMap["group-participants.update"]) => {
+				// Update group metadata cache when participants change
 				try {
-					const metadata = await this.socket!.groupMetadata(update.id);
-					this.groupCache.set(update.id, metadata);
+					if (!this.socket) return;
+					const metadata = await this.socket.groupMetadata(event.id);
+					this.groupCache.set(event.id, metadata);
 					console.log(
-						`Updated group metadata cache for: ${metadata.subject || update.id}`,
+						`Updated group metadata cache for participant change in: ${metadata.subject || event.id}`,
 					);
 				} catch (error) {
 					console.error(
-						`Failed to update group metadata cache for ${update.id}:`,
+						`Failed to update group metadata cache for participant change in ${event.id}:`,
 						error,
 					);
 				}
+			},
+		);
 
-				if (update.subject && !this.targetGroupId) {
-					// Check if this is our target group (only if not already configured from env)
-					if (update.subject === this.targetGroupName) {
-						this.targetGroupId = update.id;
+		// Handle chats update
+		this.socket.ev.on(
+			"chats.upsert",
+			async (chats: BaileysEventMap["chats.upsert"]) => {
+				// Look for our target group in new chats (only if not already configured from env)
+				for (const chat of chats) {
+					if (
+						chat.id &&
+						isJidGroup(chat.id) &&
+						chat.name === this.targetGroupName &&
+						!this.targetGroupId
+					) {
+						this.targetGroupId = chat.id;
 						console.log(
 							`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`,
 						);
 					}
 				}
-			}
-		});
-
-		// Handle group participants update
-		this.socket.ev.on("group-participants.update", async (event: any) => {
-			// Update group metadata cache when participants change
-			try {
-				const metadata = await this.socket!.groupMetadata(event.id);
-				this.groupCache.set(event.id, metadata);
-				console.log(
-					`Updated group metadata cache for participant change in: ${metadata.subject || event.id}`,
-				);
-			} catch (error) {
-				console.error(
-					`Failed to update group metadata cache for participant change in ${event.id}:`,
-					error,
-				);
-			}
-		});
-
-		// Handle chats update
-		this.socket.ev.on("chats.upsert", async (chats: any[]) => {
-			// Look for our target group in new chats (only if not already configured from env)
-			for (const chat of chats) {
-				if (
-					isJidGroup(chat.id) &&
-					chat.name === this.targetGroupName &&
-					!this.targetGroupId
-				) {
-					this.targetGroupId = chat.id;
-					console.log(
-						`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`,
-					);
-				}
-			}
-		});
+			},
+		);
 	}
 
 	private async handleIncomingMessage(message: WAMessage): Promise<void> {
@@ -278,7 +297,8 @@ export class WhatsAppClient {
 				return;
 			}
 
-			const chatId = message.key.remoteJid!;
+			const chatId = message.key.remoteJid;
+			if (!chatId) return;
 			const isGroup = isJidGroup(chatId);
 			const timestamp = new Date().toLocaleTimeString();
 
@@ -288,12 +308,13 @@ export class WhatsAppClient {
 			// Get chat and contact information
 			try {
 				if (isGroup) {
-					const groupMetadata = await this.socket!.groupMetadata(chatId);
+					if (!this.socket) return;
+					const groupMetadata = await this.socket.groupMetadata(chatId);
 					chatName = groupMetadata.subject || "Unknown Group";
 
 					// Find the participant who sent the message
 					const participant = groupMetadata.participants.find(
-						(p: any) =>
+						(p) =>
 							jidNormalizedUser(p.id) ===
 							jidNormalizedUser(message.key.participant || ""),
 					);
@@ -476,61 +497,6 @@ export class WhatsAppClient {
 		}
 	}
 
-	private async sendEventToGroup(
-		groupId: string,
-		eventDetails: EventDetails,
-	): Promise<void> {
-		if (!this.socket || !this.isReady) {
-			console.error("WhatsApp socket not ready");
-			return;
-		}
-
-		try {
-			// Create a detailed event message
-			const eventMessage = this.formatEventMessage(eventDetails);
-
-			// Send the event details
-			// Send as text message first
-			await this.socket.sendMessage(groupId, { text: eventMessage });
-
-			// Try to send as calendar event if we have complete details
-			if (
-				eventDetails.title &&
-				eventDetails.startDateISO &&
-				eventDetails.endDateISO
-			) {
-				try {
-					const vCalendarContent = this.createEventVCalendar(eventDetails);
-					const filename = `event_${Date.now()}.ics`;
-
-					// Create a buffer from the VCalendar content
-					const buffer = Buffer.from(vCalendarContent, "utf-8");
-
-					// Send as document attachment
-					await this.socket.sendMessage(groupId, {
-						document: buffer,
-						fileName: filename,
-						mimetype: "text/calendar",
-						caption: `📅 Calendar Event: ${eventDetails.title}`,
-					});
-				} catch (error) {
-					console.error(
-						"Failed to send calendar attachment, falling back to text:",
-						error,
-					);
-					// Fallback to text format if attachment fails
-					await this.socket.sendMessage(groupId, {
-						text: `📅 Calendar Event fallback:\n\n${this.createEventVCalendar(eventDetails)}`,
-					});
-				}
-			}
-
-			// Note: This method is kept for backward compatibility but sendUnifiedEventMessage is preferred
-		} catch (error) {
-			console.error("Error sending event to group:", error);
-		}
-	}
-
 	private formatUnifiedEventMessage(
 		eventDetails: EventDetails,
 		sourceChatInfo: string,
@@ -609,40 +575,6 @@ export class WhatsAppClient {
 		caption += `\n💬 ${sourceChatInfo}`;
 
 		return caption;
-	}
-
-	private formatEventMessage(eventDetails: EventDetails): string {
-		let eventMessage = `📅 **Event Details:**\n\n`;
-
-		if (eventDetails.title) {
-			eventMessage += `**Title:** ${eventDetails.title}\n`;
-		}
-
-		if (eventDetails.date) {
-			eventMessage += `**Date:** ${eventDetails.date}\n`;
-		}
-
-		if (eventDetails.time) {
-			eventMessage += `**Time:** ${eventDetails.time}\n`;
-		}
-
-		if (eventDetails.location) {
-			eventMessage += `**Location:** ${eventDetails.location}\n`;
-		}
-
-		if (eventDetails.description) {
-			eventMessage += `**Description:** ${eventDetails.description}\n`;
-		}
-
-		if (eventDetails.startDateISO) {
-			eventMessage += `**Start (ISO):** ${eventDetails.startDateISO}\n`;
-		}
-
-		if (eventDetails.endDateISO) {
-			eventMessage += `**End (ISO):** ${eventDetails.endDateISO}\n`;
-		}
-
-		return eventMessage;
 	}
 
 	private createEventVCalendar(eventDetails: EventDetails): string {
