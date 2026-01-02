@@ -7,7 +7,8 @@ import type { GroupManager } from "../whatsapp-client/group-manager.js";
 import {
 	createListAllowedGroupsTool,
 	createReadGroupMessagesTool,
-} from "./group-tools.js";
+	createReadMessagesTool,
+} from "../tools/index.js";
 
 /**
  * Agent specialized in reading and summarizing messages from ALLOWED_CHAT_NAMES groups
@@ -45,9 +46,10 @@ export class GroupSummaryAgent {
 		const listGroupsTool = createListAllowedGroupsTool(
 			this.messageHistoryFetcher,
 		);
-		const readMessagesTool = createReadGroupMessagesTool(
+		const readGroupMessagesTool = createReadGroupMessagesTool(
 			this.messageHistoryFetcher,
 		);
+		const readMessagesTool = createReadMessagesTool(this.messageHistoryFetcher);
 
 		this.agent = new Agent({
 			name: "Group Summary Sub-Agent",
@@ -83,6 +85,10 @@ You have access to the following tools:
    - count: Total number of messages fetched
    - formatted: Formatted message history string
    - groupName: Name of the group
+3. read_messages - Read messages from all available groups. Returns:
+   - groups: Array of group results, each with messages, count, and formatted history
+   - totalGroups: Total number of groups
+   - totalMessages: Total number of messages across all groups
 
 CAPABILITIES:
 You can answer questions such as:
@@ -107,7 +113,7 @@ ABSOLUTE RULES:
 - If tool returns error, try with different variations of the group name or check available groups first
 
 Keep responses concise and helpful. Match the language of the user's question (Hebrew if asked in Hebrew, English if asked in English).`,
-			tools: [listGroupsTool, readMessagesTool],
+			tools: [listGroupsTool, readGroupMessagesTool, readMessagesTool],
 		});
 
 		// Log that tools are registered
@@ -115,7 +121,7 @@ Keep responses concise and helpful. Match the language of the user's question (H
 			`GroupSummaryAgent: Created agent with ${allowedGroups.length} allowed groups`,
 		);
 		console.log(
-			`GroupSummaryAgent: Tools registered: list_allowed_groups, read_group_messages`,
+			`GroupSummaryAgent: Tools registered: list_allowed_groups, read_group_messages, read_messages`,
 		);
 	}
 

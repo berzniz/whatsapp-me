@@ -1,55 +1,10 @@
 import { z } from "zod";
 import { tool } from "@openai/agents";
-import type { MessageHistoryFetcher } from "./message-history-fetcher.js";
+import type { MessageHistoryFetcher } from "../agents/message-history-fetcher.js";
 
 /**
- * Tools for the Group Summary Agent to interact with WhatsApp groups
- */
-
-/**
- * Create tool: List all allowed groups
- */
-export function createListAllowedGroupsTool(
-	messageHistoryFetcher: MessageHistoryFetcher | null,
-) {
-	return tool({
-		name: "list_allowed_groups",
-		description:
-			"List all WhatsApp groups that the bot is allowed to access. Returns group names and IDs.",
-		parameters: z.object({}),
-		execute: async () => {
-			if (!messageHistoryFetcher) {
-				return {
-					success: false,
-					error: "Message history fetcher not available",
-					groups: [],
-				};
-			}
-
-			try {
-				const groups = messageHistoryFetcher.getAllowedGroups();
-				return {
-					success: true,
-					groups: groups.map((g) => ({
-						id: g.id,
-						name: g.name,
-					})),
-					count: groups.length,
-				};
-			} catch (error) {
-				console.error("Error listing allowed groups:", error);
-				return {
-					success: false,
-					error: error instanceof Error ? error.message : "Unknown error",
-					groups: [],
-				};
-			}
-		},
-	});
-}
-
-/**
- * Create tool: Read messages from a specific group
+ * Tool: Read messages from a specific group
+ * Can read messages from any available group in the history
  */
 export function createReadGroupMessagesTool(
 	messageHistoryFetcher: MessageHistoryFetcher | null,
@@ -57,7 +12,7 @@ export function createReadGroupMessagesTool(
 	return tool({
 		name: "read_group_messages",
 		description:
-			"Read recent messages from a specific WhatsApp group. This tool MUST be called when asked about a group's message history. Provide the group name to fetch messages. Returns: messages array (with text, sender, timestamp), count (total messages), formatted string, and groupName. Use this data to answer questions like 'who said what?', 'how many messages?', or to summarize conversations.",
+			"Read recent messages from a specific WhatsApp group. This tool can read messages from any available group in the history. Provide the group name to fetch messages. Returns: messages array (with text, sender, timestamp), count (total messages), formatted string, and groupName. Use this data to answer questions like 'who said what?', 'how many messages?', or to summarize conversations.",
 		parameters: z.object({
 			groupName: z
 				.string()
@@ -158,3 +113,4 @@ export function createReadGroupMessagesTool(
 		},
 	});
 }
+
