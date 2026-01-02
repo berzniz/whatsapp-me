@@ -143,11 +143,15 @@ export class WhatsAppClient {
 		);
 		if (this.config.targetGroupId) {
 			console.log(
-				`Event summaries will be sent to the "${this.config.targetGroupName}" group when detected.`,
+				`Event summaries will be sent to the target group (ID: ${this.config.targetGroupId}) when detected.`,
+			);
+		} else if (this.config.targetGroupName) {
+			console.log(
+				`Will search for target group "${this.config.targetGroupName}". Event summaries will be sent once the group is found.`,
 			);
 		} else {
 			console.log(
-				`⚠ Target group "${this.config.targetGroupName}" not found. Event summaries will not be sent until the group is found.`,
+				`⚠ Target group not configured. Event summaries will not be sent. Please set TARGET_GROUP_ID or TARGET_GROUP_NAME in your .env file.`,
 			);
 		}
 		if (this.config.botGroupId) {

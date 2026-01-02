@@ -2,7 +2,7 @@ import * as fs from "fs";
 
 export class WhatsAppConfig {
 	public readonly sessionDir = ".baileys_auth";
-	public targetGroupName: string = "אני"; // Default, will be overridden in configureTargetGroup
+	public targetGroupName: string | null = null;
 	public targetGroupId: string | null = null;
 	public botGroupName: string | null = null;
 	public botGroupId: string | null = null;
@@ -36,7 +36,7 @@ export class WhatsAppConfig {
 			console.log(
 				`Using target group ID from environment: ${this.targetGroupId}`,
 			);
-			this.targetGroupName = envTargetGroupName || "אני";
+			this.targetGroupName = envTargetGroupName || null;
 		} else if (envTargetGroupName) {
 			// If only TARGET_GROUP_NAME is provided, use it for searching
 			this.targetGroupName = envTargetGroupName;
@@ -44,9 +44,9 @@ export class WhatsAppConfig {
 				`Will search for target group by name: "${this.targetGroupName}"`,
 			);
 		} else {
-			// Use default value if nothing is configured in .env
-			this.targetGroupName = "אני"; // Default target group name
-			console.log(`Using default target group name: "${this.targetGroupName}"`);
+			console.log(
+				"No TARGET_GROUP_ID or TARGET_GROUP_NAME configured. Event summaries will not be sent until a target group is found.",
+			);
 		}
 	}
 
@@ -58,16 +58,12 @@ export class WhatsAppConfig {
 		if (envBotGroupId) {
 			// If BOT_GROUP_ID is provided, use it directly
 			this.botGroupId = envBotGroupId;
-			console.log(
-				`Using bot group ID from environment: ${this.botGroupId}`,
-			);
+			console.log(`Using bot group ID from environment: ${this.botGroupId}`);
 			this.botGroupName = envBotGroupName || null;
 		} else if (envBotGroupName) {
 			// If only BOT_GROUP_NAME is provided, use it for searching
 			this.botGroupName = envBotGroupName;
-			console.log(
-				`Will search for bot group by name: "${this.botGroupName}"`,
-			);
+			console.log(`Will search for bot group by name: "${this.botGroupName}"`);
 		}
 	}
 
@@ -97,4 +93,3 @@ export class WhatsAppConfig {
 		return words.some((word) => word.toLowerCase() === normalizedSearchWord);
 	}
 }
-

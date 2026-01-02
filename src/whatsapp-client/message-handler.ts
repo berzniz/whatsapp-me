@@ -1,4 +1,9 @@
-import { getContentType, isJidGroup, jidNormalizedUser, type WAMessage } from "@whiskeysockets/baileys";
+import {
+	getContentType,
+	isJidGroup,
+	jidNormalizedUser,
+	type WAMessage,
+} from "@whiskeysockets/baileys";
 import type { WASocketType } from "./types.js";
 import type { OpenAIService } from "../openai-service.js";
 import type { EventDeduplicationService } from "../event-deduplication.js";
@@ -81,7 +86,11 @@ export class MessageHandler {
 			const chatInfo = await this.getChatInfo(chatId, message, isGroup);
 
 			// Check if this is a message from the bot group
-			if (isGroup && this.config.botGroupId && chatId === this.config.botGroupId) {
+			if (
+				isGroup &&
+				this.config.botGroupId &&
+				chatId === this.config.botGroupId
+			) {
 				// Skip bot responses (messages starting with robot emoji) to avoid loops
 				if (messageText.startsWith("🤖")) {
 					return;
@@ -111,7 +120,9 @@ export class MessageHandler {
 					);
 					console.log(`Sent bot response to bot group`);
 				} else {
-					console.warn(`Failed to get response from OpenAI for bot group message`);
+					console.warn(
+						`Failed to get response from OpenAI for bot group message`,
+					);
 				}
 
 				return; // Don't process as event detection
@@ -193,11 +204,11 @@ export class MessageHandler {
 						);
 					}
 					console.log(
-						`Single event message with ICS attachment sent to "${this.config.targetGroupName}" group`,
+						`Single event message with ICS attachment sent to target group (ID: ${this.config.targetGroupId})`,
 					);
 				} else {
 					console.log(
-						`Target group "${this.config.targetGroupName}" not found. Event summary not sent.`,
+						`Target group ${this.config.targetGroupName ? `"${this.config.targetGroupName}"` : ""} not found yet. Event summary not sent.`,
 					);
 				}
 			}
@@ -244,9 +255,7 @@ export class MessageHandler {
 							jidNormalizedUser(message.key.participant || ""),
 					);
 					contactName =
-						participant?.notify ||
-						participant?.id?.split("@")[0] ||
-						"Unknown";
+						participant?.notify || participant?.id?.split("@")[0] || "Unknown";
 				} else {
 					contactName = message.key.participant?.split("@")[0] || "Unknown";
 				}
@@ -268,4 +277,3 @@ export class MessageHandler {
 		return { chatName, contactName };
 	}
 }
-

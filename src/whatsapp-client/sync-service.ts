@@ -61,9 +61,13 @@ export class SyncService {
 					`✓ Target group metadata is up to date (updated less than a week ago)`,
 				);
 			}
+		} else if (this.config.targetGroupName) {
+			console.warn(
+				`⚠ Target group "${this.config.targetGroupName}" not found yet. Will continue searching...`,
+			);
 		} else {
 			console.warn(
-				`⚠ Target group "${this.config.targetGroupName}" not found. Make sure the bot is added to the group.`,
+				`⚠ Target group not configured. Make sure TARGET_GROUP_ID or TARGET_GROUP_NAME is set in your .env file.`,
 			);
 		}
 
@@ -145,8 +149,8 @@ export class SyncService {
 				`✓ Cached metadata for ${cachedCount} groups (filtered by ALLOWED_CHAT_NAMES${skippedCount > 0 ? `, ${skippedCount} skipped due to recent update` : ""})`,
 			);
 
-			// If we don't have target group ID yet, search for it
-			if (!this.config.targetGroupId) {
+			// If we don't have target group ID yet, search for it by name
+			if (!this.config.targetGroupId && this.config.targetGroupName) {
 				const foundGroup = groups.find(
 					(g) => g.subject === this.config.targetGroupName,
 				);
@@ -154,6 +158,10 @@ export class SyncService {
 					this.config.targetGroupId = foundGroup.id;
 					console.log(
 						`✓ Found target group "${this.config.targetGroupName}" with ID: ${this.config.targetGroupId}`,
+					);
+					this.groupManager.setCachedMetadataAndMarkUpdated(
+						this.config.targetGroupId,
+						foundGroup,
 					);
 				} else {
 					console.log(
@@ -166,7 +174,7 @@ export class SyncService {
 						);
 					}
 				}
-			} else {
+			} else if (this.config.targetGroupId) {
 				// Verify the target group exists
 				const targetGroup = groups.find(
 					(g) => g.id === this.config.targetGroupId,

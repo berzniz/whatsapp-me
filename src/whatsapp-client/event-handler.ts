@@ -61,7 +61,7 @@ export class EventHandler {
 					if (!update.id) continue;
 
 					// Check if this is our target group (only if not already configured from env)
-					if (update.subject && !this.config.targetGroupId && update.id) {
+					if (update.subject && !this.config.targetGroupId && this.config.targetGroupName) {
 						if (update.subject === this.config.targetGroupName) {
 							this.config.targetGroupId = update.id;
 							console.log(

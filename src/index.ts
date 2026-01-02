@@ -1,5 +1,6 @@
 import { WhatsAppClient } from "./whatsapp-client/index.js";
 import dotenv from "dotenv";
+import { EnvValidator } from "./env-validator.js";
 
 // Load environment variables
 dotenv.config();
@@ -16,13 +17,9 @@ async function main() {
 		);
 		console.log("==================================\n");
 
-		// Check if OpenAI API key is set
-		if (!process.env.OPENAI_API_KEY) {
-			console.error("Error: OPENAI_API_KEY is not defined in .env file");
-			console.log("Please create a .env file with your OpenAI API key:");
-			console.log("OPENAI_API_KEY=your_api_key_here");
-			process.exit(1);
-		}
+		// Validate environment variables and prompt for missing ones
+		const envValidator = new EnvValidator();
+		await envValidator.validateAndPrompt();
 
 		// Initialize WhatsApp client
 		const whatsappClient = new WhatsAppClient();

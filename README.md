@@ -45,22 +45,13 @@ This application connects to WhatsApp using the Baileys library, listens for mes
    OPENAI_API_KEY=your_api_key_here
    ```
    
-   **Target Group Configuration (choose one):**
+   **Target Group Configuration:**
    ```
-   # Option 1: Use target group ID directly (recommended if you know it)
    TARGET_GROUP_ID=120363123456789012@g.us
-   
-   # Option 2: Use target group name for automatic search
-   TARGET_GROUP_NAME=אני
    ```
-   - If `TARGET_GROUP_ID` is provided, it will be used directly (faster and more reliable)
-   - If only `TARGET_GROUP_NAME` is provided, the bot will search for the group by name
-   - If neither is provided, defaults to searching for a group named "אני"
-   
-   **Finding your WhatsApp Group ID:**
-   - Run the bot once with `TARGET_GROUP_NAME` configured
-   - When the bot finds your group, it will log the group ID in the console
-   - Copy that ID and use it as `TARGET_GROUP_ID` for better performance
+   - Set `TARGET_GROUP_ID` to the WhatsApp group ID where event summaries will be sent
+   - The group ID format is: `120363123456789012@g.us`
+   - You can find your group ID by checking WhatsApp group info or by examining the bot's logs when it connects
    
 4. (Optional) Add `ALLOWED_CHAT_NAMES` to your `.env` file to filter which chats are analyzed:
    ```
@@ -133,7 +124,7 @@ When a day of the week is mentioned without "next" (e.g., just "Monday"), the ap
 ## Troubleshooting
 
 - If the application fails to connect, make sure your internet connection is stable
-- If the target group is not found, check your `TARGET_GROUP_ID` or `TARGET_GROUP_NAME` configuration in the `.env` file
+- If the target group is not found, check your `TARGET_GROUP_ID` configuration in the `.env` file
 - If OpenAI analysis fails, check your API key and internet connection
 - If calendar events don't contain the correct information, the event details might not be clearly specified in the original message
 - If authentication fails, delete the `.baileys_auth` folder and restart to get a fresh QR code
