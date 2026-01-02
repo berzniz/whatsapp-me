@@ -1,4 +1,4 @@
-import { WhatsAppClient } from "./whatsapp-client.js";
+import { WhatsAppClient } from "./whatsapp-client/index.js";
 import dotenv from "dotenv";
 
 // Load environment variables

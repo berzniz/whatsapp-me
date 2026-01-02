@@ -227,6 +227,21 @@ If no time specified, use 08:00 AM
 
 			const content = response.choices[0]?.message?.content || "";
 
+			if (!content) {
+				console.warn("OpenAI API returned empty content");
+				return {
+					isEvent: false,
+					summary: null,
+					title: null,
+					date: null,
+					time: null,
+					location: null,
+					description: null,
+					startDateISO: null,
+					endDateISO: null,
+				};
+			}
+
 			try {
 				// Parse the JSON response
 				const parsedResponse = JSON.parse(content);
@@ -240,7 +255,7 @@ If no time specified, use 08:00 AM
 					}
 				}
 
-				return {
+				const result = {
 					isEvent: parsedResponse.isEvent === true,
 					summary: parsedResponse.summary || null,
 					title: parsedResponse.title || null,
@@ -251,6 +266,17 @@ If no time specified, use 08:00 AM
 					startDateISO: parsedResponse.startDateISO || null,
 					endDateISO: parsedResponse.endDateISO || null,
 				};
+
+				// Log the analysis result for debugging
+				if (result.isEvent) {
+					console.log(
+						`Analysis result: Event detected - ${result.title || "Untitled"}`,
+					);
+				} else {
+					console.log(`Analysis result: No event detected`);
+				}
+
+				return result;
 			} catch (parseError) {
 				console.error("Error parsing OpenAI response:", parseError);
 				console.log("Raw response:", content);
