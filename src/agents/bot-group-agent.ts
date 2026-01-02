@@ -75,14 +75,18 @@ If asked about groups or to summarize messages from groups, use this agent.`,
 
 1. For event-related queries (detecting events, extracting event details, calendar information, meetings, dates):
    - Hand off to the "Event Detection Sub-Agent"
+   - Wait for the sub-agent's response and return it to the user
 
 2. For questions about other WhatsApp groups, summarizing group messages, or reading messages from groups:
    - Hand off to the "Group Summary Sub-Agent"
+   - Wait for the sub-agent to complete its work (it will use tools to fetch messages and provide a summary)
+   - Return the sub-agent's summary response directly to the user - do not add your own commentary
 
 3. For general conversation, questions, and chat:
    - Hand off to the "Chat Sub-Agent"
+   - Wait for the sub-agent's response and return it to the user
 
-Analyze the user's message and delegate to the appropriate sub-agent. If the message mentions events, meetings, dates, times, calendar, or scheduling, use Event Detection Sub-Agent. If the message asks about other groups, wants summaries, or asks to read messages from groups, use Group Summary Sub-Agent. Otherwise, use Chat Sub-Agent for general conversation.`,
+IMPORTANT: When you hand off to a sub-agent, wait for their complete response before responding to the user. The sub-agent's response IS your response - pass it through directly without modification.`,
 			handoffs: handoffs,
 		});
 	}
@@ -114,7 +118,7 @@ Analyze the user's message and delegate to the appropriate sub-agent. If the mes
 				const resultStr = JSON.stringify(result, null, 2);
 				console.log(
 					`BotGroupAgent result structure:`,
-					resultStr.substring(0, 500),
+					resultStr.substring(0, 1000),
 				);
 			} catch (e) {
 				console.log(`BotGroupAgent result (cannot stringify):`, result);
@@ -122,6 +126,21 @@ Analyze the user's message and delegate to the appropriate sub-agent. If the mes
 			console.log(`BotGroupAgent result keys:`, Object.keys(result));
 			console.log(`BotGroupAgent finalOutput:`, result.finalOutput);
 			console.log(`BotGroupAgent finalOutput type:`, typeof result.finalOutput);
+
+			// Log state information if available
+			if (result.state) {
+				const state = result.state as unknown as Record<string, unknown>;
+				console.log(`BotGroupAgent state.currentAgent:`, state.currentAgent);
+				console.log(`BotGroupAgent state.currentTurn:`, state.currentTurn);
+				if (state.modelResponses) {
+					console.log(
+						`BotGroupAgent state.modelResponses count:`,
+						Array.isArray(state.modelResponses)
+							? state.modelResponses.length
+							: "not an array",
+					);
+				}
+			}
 
 			// Extract the response text - try different ways to access it
 			let responseText = "";
