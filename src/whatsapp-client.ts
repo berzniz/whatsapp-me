@@ -11,7 +11,7 @@ import makeWASocket, {
 } from "@whiskeysockets/baileys";
 import type { Boom } from "@hapi/boom";
 import * as fs from "fs";
-import * as qrcode from "qrcode-terminal";
+import qrcode from "qrcode-terminal";
 import NodeCache from "node-cache";
 import { OpenAIService, type EventDetails } from "./openai-service.js";
 import { EventDeduplicationService } from "./event-deduplication.js";
@@ -21,6 +21,7 @@ type WASocketType = ReturnType<typeof makeWASocket>;
 export class WhatsAppClient {
 	private socket: WASocketType | null = null;
 	private isReady: boolean = false;
+	private isSynced: boolean = false;
 	private reconnectAttempts: number = 0;
 	private maxReconnectAttempts: number = 3;
 	private readonly sessionDir = ".baileys_auth";
@@ -31,10 +32,17 @@ export class WhatsAppClient {
 	private connectionState: string = "close";
 	private groupCache = new NodeCache({ stdTTL: 5 * 60, useClones: false }); // 5 minute TTL
 	private eventDeduplicationService: EventDeduplicationService;
+	private readonly allowedChatNames: string[];
 
 	constructor() {
 		this.openaiService = new OpenAIService();
 		this.eventDeduplicationService = new EventDeduplicationService();
+
+		// Get allowed chat names from environment variable
+		const allowedChatNamesStr = process.env.ALLOWED_CHAT_NAMES;
+		this.allowedChatNames = allowedChatNamesStr
+			? allowedChatNamesStr.split(",").map((name) => name.trim())
+			: [];
 
 		// Configure target group from environment variables
 		this.configureTargetGroup();
@@ -70,6 +78,57 @@ export class WhatsAppClient {
 		if (!fs.existsSync(this.sessionDir)) {
 			fs.mkdirSync(this.sessionDir, { recursive: true });
 		}
+	}
+
+	/**
+	 * Check if a string contains another string as a whole word (word boundary matching)
+	 * Works with Unicode characters including Hebrew
+	 */
+	private containsWholeWord(text: string, searchWord: string): boolean {
+		// Normalize the search word (trim and lowercase for comparison)
+		const normalizedSearchWord = searchWord.trim().toLowerCase();
+		if (!normalizedSearchWord) return false;
+
+		// Split text by word boundaries (spaces, punctuation, etc.)
+		// This regex matches Unicode word characters and splits on non-word characters
+		// For Hebrew and other Unicode, we'll split on spaces and common separators
+		const words = text
+			.split(/[\s\-–—,.;:!?()[\]{}'"`~@#$%^&*+=|\\<>\/]+/)
+			.filter((word) => word.length > 0);
+
+		// Check if any word exactly matches the search word (case-insensitive)
+		return words.some((word) => word.toLowerCase() === normalizedSearchWord);
+	}
+
+	/**
+	 * Check if a group should have its metadata cached
+	 * We cache metadata for:
+	 * 1. The target group (always) - needed to send messages
+	 * 2. Groups in the allowed list (if ALLOWED_CHAT_NAMES is set)
+	 * 3. All groups (if no allowed list is specified)
+	 */
+	private shouldCacheGroupMetadata(
+		groupSubject: string | null,
+		groupId: string,
+	): boolean {
+		// Always cache the target group
+		if (groupId === this.targetGroupId) {
+			return true;
+		}
+
+		// If no allowed list is specified, cache all groups (backward compatibility)
+		if (this.allowedChatNames.length === 0) {
+			return true;
+		}
+
+		// Only cache groups that are in the allowed list
+		if (!groupSubject) {
+			return false;
+		}
+
+		return this.allowedChatNames.some((name) =>
+			this.containsWholeWord(groupSubject, name),
+		);
 	}
 
 	private async createSocket(): Promise<void> {
@@ -123,6 +182,7 @@ export class WhatsAppClient {
 				if (connection === "close") {
 					this.connectionState = "close";
 					this.isReady = false;
+					this.isSynced = false;
 
 					const shouldReconnect =
 						(lastDisconnect?.error as Boom)?.output?.statusCode !==
@@ -158,12 +218,22 @@ export class WhatsAppClient {
 					}
 				} else if (connection === "open") {
 					this.connectionState = "open";
-					this.isReady = true;
 					this.reconnectAttempts = 0;
 					console.log("WhatsApp connection opened successfully!");
 
-					// Find the target group when connection is established
-					await this.findTargetGroup();
+					// Perform full synchronization before marking as ready
+					try {
+						console.log("Starting full synchronization...");
+						await this.performFullSync();
+						this.isSynced = true;
+						this.isReady = true;
+						console.log("Full synchronization completed successfully!");
+					} catch (error) {
+						console.error("Error during synchronization:", error);
+						// Still mark as ready but log the error
+						this.isReady = true;
+						this.isSynced = false;
+					}
 				} else if (connection === "connecting") {
 					this.connectionState = "connecting";
 					console.log("Connecting to WhatsApp...");
@@ -180,10 +250,20 @@ export class WhatsAppClient {
 			async (messageUpdate: BaileysEventMap["messages.upsert"]) => {
 				const { messages, type } = messageUpdate;
 
-				if (type !== "notify") return;
+				console.log(`Received ${messages.length} message(s), type: ${type}`);
+
+				if (type !== "notify") {
+					console.log(`Skipping message type: ${type}`);
+					return;
+				}
 
 				for (const message of messages) {
-					await this.handleIncomingMessage(message);
+					try {
+						await this.handleIncomingMessage(message);
+					} catch (error) {
+						console.error("Error handling message:", error);
+						// Continue processing other messages even if one fails
+					}
 				}
 			},
 		);
@@ -193,8 +273,25 @@ export class WhatsAppClient {
 			"groups.update",
 			async (updates: BaileysEventMap["groups.update"]) => {
 				for (const update of updates) {
-					// Update group metadata cache
 					if (!update.id) continue;
+
+					// Check if this is our target group (only if not already configured from env)
+					if (update.subject && !this.targetGroupId && update.id) {
+						if (update.subject === this.targetGroupName) {
+							this.targetGroupId = update.id;
+							console.log(
+								`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`,
+							);
+						}
+					}
+
+					// Only update group metadata cache for allowed groups to avoid rate limits
+					if (
+						!this.shouldCacheGroupMetadata(update.subject || null, update.id)
+					) {
+						continue;
+					}
+
 					try {
 						if (!this.socket) return;
 						const metadata = await this.socket.groupMetadata(update.id);
@@ -208,16 +305,6 @@ export class WhatsAppClient {
 							error,
 						);
 					}
-
-					if (update.subject && !this.targetGroupId && update.id) {
-						// Check if this is our target group (only if not already configured from env)
-						if (update.subject === this.targetGroupName) {
-							this.targetGroupId = update.id;
-							console.log(
-								`Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`,
-							);
-						}
-					}
 				}
 			},
 		);
@@ -226,6 +313,18 @@ export class WhatsAppClient {
 		this.socket.ev.on(
 			"group-participants.update",
 			async (event: BaileysEventMap["group-participants.update"]) => {
+				// Only update group metadata cache for allowed groups to avoid rate limits
+				// First check if we have cached metadata to get the subject
+				let groupSubject: string | null = null;
+				const cachedMetadata = this.groupCache.get(event.id) as
+					| { subject?: string | null }
+					| undefined;
+				groupSubject = cachedMetadata?.subject ?? null;
+
+				if (!this.shouldCacheGroupMetadata(groupSubject, event.id)) {
+					return;
+				}
+
 				// Update group metadata cache when participants change
 				try {
 					if (!this.socket) return;
@@ -267,8 +366,13 @@ export class WhatsAppClient {
 
 	private async handleIncomingMessage(message: WAMessage): Promise<void> {
 		try {
-			// Skip if message is from self or has no content
-			if (message.key.fromMe || !message.message) return;
+			// Skip if message has no content
+			if (!message.message) {
+				console.log(
+					`Skipping message with no content from ${message.key.remoteJid}`,
+				);
+				return;
+			}
 
 			const messageType = getContentType(message.message);
 			if (
@@ -308,24 +412,69 @@ export class WhatsAppClient {
 			// Get chat and contact information
 			try {
 				if (isGroup) {
-					if (!this.socket) return;
-					const groupMetadata = await this.socket.groupMetadata(chatId);
-					chatName = groupMetadata.subject || "Unknown Group";
+					// First try to get from cache to avoid rate limits
+					const cachedMetadata = this.groupCache.get(chatId) as
+						| {
+								subject?: string;
+								participants?: Array<{ id: string; notify?: string }>;
+						  }
+						| undefined;
+
+					let groupMetadata = cachedMetadata;
+
+					// Fetch metadata if not cached (we need it to process the message)
+					// But only cache it if it's an allowed group to avoid rate limits
+					if (!groupMetadata && this.socket) {
+						try {
+							const fetchedMetadata = await this.socket.groupMetadata(chatId);
+							const groupSubject = fetchedMetadata.subject || null;
+
+							// Use the metadata for this message
+							groupMetadata = fetchedMetadata;
+
+							// Only cache if it's an allowed group (to avoid rate limits on updates)
+							if (this.shouldCacheGroupMetadata(groupSubject, chatId)) {
+								this.groupCache.set(chatId, fetchedMetadata);
+							}
+						} catch (error) {
+							// If fetch fails (e.g., rate limit), use fallback
+							console.warn(
+								`Could not fetch metadata for group ${chatId}, using fallback:`,
+								error,
+							);
+							groupMetadata = { subject: chatId.split("@")[0] };
+						}
+					}
+
+					chatName = groupMetadata?.subject || "Unknown Group";
 
 					// Find the participant who sent the message
-					const participant = groupMetadata.participants.find(
-						(p) =>
-							jidNormalizedUser(p.id) ===
-							jidNormalizedUser(message.key.participant || ""),
-					);
-					contactName =
-						participant?.notify || participant?.id?.split("@")[0] || "Unknown";
+					if (groupMetadata?.participants) {
+						const participant = groupMetadata.participants.find(
+							(p) =>
+								jidNormalizedUser(p.id) ===
+								jidNormalizedUser(message.key.participant || ""),
+						);
+						contactName =
+							participant?.notify ||
+							participant?.id?.split("@")[0] ||
+							"Unknown";
+					} else {
+						contactName = message.key.participant?.split("@")[0] || "Unknown";
+					}
 				} else {
 					chatName = chatId.split("@")[0];
 					contactName = chatName;
 				}
 			} catch (error) {
 				console.error("Error getting chat/contact info:", error);
+				// Fallback values if error occurs
+				if (!chatName) {
+					chatName = chatId.split("@")[0];
+				}
+				if (contactName === "Unknown" && message.key.participant) {
+					contactName = message.key.participant.split("@")[0];
+				}
 			}
 
 			// Log the message
@@ -408,33 +557,122 @@ export class WhatsAppClient {
 		}
 	}
 
-	private async findTargetGroup(): Promise<void> {
-		if (!this.socket || !this.isReady) return;
+	private async performFullSync(): Promise<void> {
+		if (!this.socket) {
+			throw new Error("Socket not available for synchronization");
+		}
+
+		console.log("Performing full synchronization...");
+
+		// Step 1: Sync all groups and find target group
+		await this.syncAllGroups();
+
+		// Step 2: Sync all chats (this happens via events, but we wait a bit)
+		await this.syncAllChats();
+
+		// Step 3: Verify target group is accessible if configured
+		if (this.targetGroupId) {
+			try {
+				const metadata = await this.socket.groupMetadata(this.targetGroupId);
+				this.groupCache.set(this.targetGroupId, metadata);
+				console.log(
+					`✓ Target group verified: ${metadata.subject || this.targetGroupId}`,
+				);
+			} catch (error) {
+				console.warn(
+					`⚠ Could not verify target group ${this.targetGroupId}:`,
+					error,
+				);
+			}
+		} else {
+			console.warn(
+				`⚠ Target group "${this.targetGroupName}" not found. Make sure the bot is added to the group.`,
+			);
+		}
+
+		console.log("Full synchronization completed");
+	}
+
+	private async syncAllGroups(): Promise<void> {
+		if (!this.socket) return;
 
 		try {
-			// If we already have the target group ID from environment variables, no need to search
-			if (this.targetGroupId) {
-				console.log(
-					`Target group ID already configured: ${this.targetGroupId}`,
-				);
-				return;
+			console.log("Syncing all groups...");
+			const groupsDict = await this.socket.groupFetchAllParticipating();
+
+			// Convert dictionary to array
+			const groups = Object.values(groupsDict);
+
+			console.log(`✓ Found ${groups.length} groups`);
+
+			// Cache group metadata only for allowed groups (to avoid rate limits)
+			let cachedCount = 0;
+			for (const group of groups) {
+				if (this.shouldCacheGroupMetadata(group.subject || null, group.id)) {
+					this.groupCache.set(group.id, group);
+					cachedCount++;
+				}
 			}
+			console.log(
+				`✓ Cached metadata for ${cachedCount} groups (filtered by ALLOWED_CHAT_NAMES)`,
+			);
 
-			console.log(`Looking for target group: "${this.targetGroupName}"`);
-
-			// We'll rely on the chats.upsert and groups.update events to find the group
-			// This is more efficient than querying all groups
-
-			// Set a timeout to log if group is not found
-			setTimeout(() => {
-				if (!this.targetGroupId) {
+			// If we don't have target group ID yet, search for it
+			if (!this.targetGroupId) {
+				const foundGroup = groups.find(
+					(g) => g.subject === this.targetGroupName,
+				);
+				if (foundGroup) {
+					this.targetGroupId = foundGroup.id;
 					console.log(
-						`Target group "${this.targetGroupName}" not found yet. Make sure the bot is added to the group.`,
+						`✓ Found target group "${this.targetGroupName}" with ID: ${this.targetGroupId}`,
+					);
+				} else {
+					console.log(
+						`Target group "${this.targetGroupName}" not found in ${groups.length} groups.`,
+					);
+					if (groups.length > 0) {
+						console.log(
+							"Available groups:",
+							groups.map((g) => g.subject || g.id).join(", "),
+						);
+					}
+				}
+			} else {
+				// Verify the target group exists
+				const targetGroup = groups.find((g) => g.id === this.targetGroupId);
+				if (targetGroup) {
+					console.log(
+						`✓ Verified target group exists: ${targetGroup.subject || this.targetGroupId}`,
+					);
+					this.groupCache.set(this.targetGroupId, targetGroup);
+				} else {
+					console.warn(
+						`⚠ Target group ID ${this.targetGroupId} not found in synced groups.`,
 					);
 				}
-			}, 10000);
+			}
 		} catch (error) {
-			console.error("Error finding target group:", error);
+			console.error("Error syncing groups:", error);
+			throw error;
+		}
+	}
+
+	private async syncAllChats(): Promise<void> {
+		if (!this.socket) return;
+
+		try {
+			console.log("Syncing all chats...");
+
+			// Wait for chats to be loaded via events
+			// Baileys will emit chats.upsert events with all chats
+			// We'll wait a bit for the initial sync to complete
+			await new Promise((resolve) => setTimeout(resolve, 2000));
+
+			console.log("✓ Chats sync completed");
+		} catch (error) {
+			console.error("Error syncing chats:", error);
+			// Don't throw - chats sync is less critical than groups
 		}
 	}
 
@@ -626,16 +864,17 @@ export class WhatsAppClient {
 			console.log("Initializing WhatsApp client...");
 			await this.createSocket();
 
-			// Wait for connection to be established
+			// Wait for connection to be established and synchronized
 			let attempts = 0;
-			const maxAttempts = 60; // 60 seconds timeout
+			const maxAttempts = 90; // 90 seconds timeout (increased to allow for sync)
 
-			while (!this.isReady && attempts < maxAttempts) {
+			while ((!this.isReady || !this.isSynced) && attempts < maxAttempts) {
 				await new Promise((resolve) => setTimeout(resolve, 1000));
 				attempts++;
 
 				if (attempts % 10 === 0) {
-					console.log(`Waiting for WhatsApp connection... (${attempts}s)`);
+					const status = this.isReady ? "syncing..." : "connecting...";
+					console.log(`Waiting for WhatsApp ${status} (${attempts}s)`);
 				}
 			}
 
@@ -645,7 +884,13 @@ export class WhatsAppClient {
 				);
 			}
 
-			console.log("WhatsApp client initialized successfully!");
+			if (!this.isSynced) {
+				console.warn(
+					"Warning: Synchronization did not complete, but connection is ready. Continuing anyway...",
+				);
+			}
+
+			console.log("WhatsApp client initialized and synchronized successfully!");
 		} catch (error) {
 			console.error("Error initializing WhatsApp client:", error);
 			throw error;
@@ -658,13 +903,25 @@ export class WhatsAppClient {
 			return;
 		}
 
+		if (!this.isSynced) {
+			console.warn(
+				"Warning: Synchronization may not be complete. Starting to listen anyway...",
+			);
+		}
+
 		console.log("Started listening for messages...");
 		console.log(
 			"The bot will now monitor all conversations for event-related discussions.",
 		);
-		console.log(
-			`Event summaries will be sent to the "${this.targetGroupName}" group when detected.`,
-		);
+		if (this.targetGroupId) {
+			console.log(
+				`Event summaries will be sent to the "${this.targetGroupName}" group when detected.`,
+			);
+		} else {
+			console.log(
+				`⚠ Target group "${this.targetGroupName}" not found. Event summaries will not be sent until the group is found.`,
+			);
+		}
 	}
 
 	public async disconnect(): Promise<void> {

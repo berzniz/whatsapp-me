@@ -29,19 +29,12 @@ async function main() {
 
 		try {
 			await whatsappClient.initialize();
-			console.log("WhatsApp client initialized successfully!");
-
-			// Add a delay after initialization to ensure WhatsApp is fully loaded
-			console.log("Waiting for WhatsApp to fully load before proceeding...");
-			await new Promise((resolve) => setTimeout(resolve, 5000));
-
-			console.log("\nWhatsApp connection established successfully.");
+			console.log(
+				"\nWhatsApp connection established and synchronized successfully.",
+			);
 			console.log("Your session has been saved for future use.");
 			console.log(
 				"The application will now listen for messages and analyze them for events.",
-			);
-			console.log(
-				'Event summaries will be sent to the "אני" WhatsApp group if found.',
 			);
 
 			// Start listening for incoming messages

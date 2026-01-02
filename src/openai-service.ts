@@ -28,8 +28,13 @@ export class OpenAIService {
 			throw new Error("OPENAI_API_KEY is not defined in .env file");
 		}
 
+		// Configure timeout (30 seconds default, can be overridden via env var)
+		const timeoutMs = parseInt(process.env.OPENAI_TIMEOUT_MS || "30000", 10);
+
 		this.openai = new OpenAI({
 			apiKey: apiKey,
+			timeout: timeoutMs,
+			maxRetries: 2, // Retry up to 2 times on failure
 		});
 
 		// Get allowed chat names from environment variable
@@ -40,13 +45,35 @@ export class OpenAIService {
 	}
 
 	/**
+	 * Check if a string contains another string as a whole word (word boundary matching)
+	 * Works with Unicode characters including Hebrew
+	 */
+	private containsWholeWord(text: string, searchWord: string): boolean {
+		// Normalize the search word (trim and lowercase for comparison)
+		const normalizedSearchWord = searchWord.trim().toLowerCase();
+		if (!normalizedSearchWord) return false;
+
+		// Split text by word boundaries (spaces, punctuation, etc.)
+		// This regex matches Unicode word characters and splits on non-word characters
+		// For Hebrew and other Unicode, we'll split on spaces and common separators
+		const words = text
+			.split(/[\s\-–—,.;:!?()[\]{}'"`~@#$%^&*+=|\\<>\/]+/)
+			.filter((word) => word.length > 0);
+
+		// Check if any word exactly matches the search word (case-insensitive)
+		return words.some((word) => word.toLowerCase() === normalizedSearchWord);
+	}
+
+	/**
 	 * Check if a chat name is in the allowed list
 	 */
 	private isChatAllowed(chatName: string): boolean {
 		if (this.allowedChatNames.length === 0) {
 			return true; // If no names specified, allow all chats
 		}
-		return this.allowedChatNames.some((name) => chatName.includes(name));
+		return this.allowedChatNames.some((name) =>
+			this.containsWholeWord(chatName, name),
+		);
 	}
 
 	/**
@@ -141,21 +168,62 @@ If no year specified, use current year: ${new Date().getFullYear()}
 If no time specified, use 08:00 AM
 `;
 
-			// Call OpenAI API
-			const response = await this.openai.chat.completions.create({
-				model: "gpt-4o",
-				messages: [
-					{
-						role: "system",
-						content:
-							"You are a helpful assistant that analyzes WhatsApp messages to detect events and extract structured details. For Hebrew content, provide Hebrew output for summary, title, and location. You are also skilled at converting dates and times to ISO format.",
-					},
-					{ role: "user", content: prompt },
-				],
-				temperature: 0.2,
-				max_tokens: 300,
-				response_format: { type: "json_object" },
-			});
+			// Call OpenAI API with timeout handling
+			const startTime = Date.now();
+			let response: Awaited<
+				ReturnType<typeof this.openai.chat.completions.create>
+			>;
+
+			try {
+				const apiCall = this.openai.chat.completions.create({
+					model: "gpt-4o",
+					messages: [
+						{
+							role: "system",
+							content:
+								"You are a helpful assistant that analyzes WhatsApp messages to detect events and extract structured details. For Hebrew content, provide Hebrew output for summary, title, and location. You are also skilled at converting dates and times to ISO format.",
+						},
+						{ role: "user", content: prompt },
+					],
+					temperature: 0.2,
+					max_tokens: 300,
+					response_format: { type: "json_object" },
+				});
+
+				// Add an additional timeout safety net (35 seconds)
+				const timeoutPromise = new Promise<never>((_, reject) =>
+					setTimeout(
+						() =>
+							reject(new Error("OpenAI API call timed out after 35 seconds")),
+						35000,
+					),
+				);
+
+				response = await Promise.race([apiCall, timeoutPromise]);
+
+				const duration = Date.now() - startTime;
+				console.log(`OpenAI API call completed in ${duration}ms`);
+			} catch (apiError: unknown) {
+				const duration = Date.now() - startTime;
+				const errorMessage =
+					apiError instanceof Error ? apiError.message : String(apiError);
+				console.error(
+					`OpenAI API call failed after ${duration}ms:`,
+					errorMessage,
+				);
+
+				// Check if it's a timeout error
+				if (
+					errorMessage.includes("timeout") ||
+					errorMessage.includes("timed out")
+				) {
+					console.error(
+						"OpenAI API call timed out. This might indicate network issues or API overload.",
+					);
+				}
+
+				throw apiError;
+			}
 
 			const content = response.choices[0]?.message?.content || "";
 
@@ -205,8 +273,22 @@ If no time specified, use 08:00 AM
 					endDateISO: null,
 				};
 			}
-		} catch (error) {
+		} catch (error: unknown) {
 			console.error("Error analyzing message with OpenAI:", error);
+
+			// Provide more detailed error information
+			if (error && typeof error === "object") {
+				if ("status" in error) {
+					console.error(`OpenAI API returned status: ${error.status}`);
+				}
+				if ("code" in error) {
+					console.error(`OpenAI API error code: ${error.code}`);
+				}
+				if ("message" in error && typeof error.message === "string") {
+					console.error(`Error message: ${error.message}`);
+				}
+			}
+
 			return {
 				isEvent: false,
 				summary: null,
