@@ -57,7 +57,7 @@ export function createReadGroupMessagesTool(
 	return tool({
 		name: "read_group_messages",
 		description:
-			"Read recent messages from a specific WhatsApp group. This tool MUST be called when asked to summarize a group. Provide either the group name (e.g., 'טל') or group ID. The tool will fetch message history from the group's stored messages. Always call this tool before providing any summary.",
+			"Read recent messages from a specific WhatsApp group. This tool MUST be called when asked about a group's message history. Provide either the group name (e.g., 'טל') or group ID. Returns: messages array (with text, sender, timestamp), count (total messages), formatted string, and groupName. Use this data to answer questions like 'who said what?', 'how many messages?', or to summarize conversations.",
 		parameters: z.object({
 			groupName: z
 				.string()
@@ -78,7 +78,9 @@ export function createReadGroupMessagesTool(
 				.max(100)
 				.optional()
 				.default(50)
-				.describe("Maximum number of messages to fetch (1-100, default: 50)"),
+				.describe(
+					"Maximum number of messages to fetch (1-100, default: 50). Use a higher limit if asked about many messages.",
+				),
 		}),
 		execute: async (args: {
 			groupName?: string;
