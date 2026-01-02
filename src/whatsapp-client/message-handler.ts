@@ -11,12 +11,14 @@ import type { GroupManager } from "./group-manager.js";
 import type { MessageSender } from "./message-sender.js";
 import type { WhatsAppConfig } from "./config.js";
 import type { ChatInfo } from "./types.js";
+import type { MessageStore } from "../message-store.js";
 
 export class MessageHandler {
 	private socket: WASocketType | null;
 	private openaiService: OpenAIService;
 	private groupManager: GroupManager;
 	private config: WhatsAppConfig;
+	private messageStore: MessageStore | null;
 
 	constructor(
 		socket: WASocketType | null,
@@ -25,11 +27,13 @@ export class MessageHandler {
 		groupManager: GroupManager,
 		_messageSender: MessageSender,
 		config: WhatsAppConfig,
+		messageStore?: MessageStore | null,
 	) {
 		this.socket = socket;
 		this.openaiService = openaiService;
 		this.groupManager = groupManager;
 		this.config = config;
+		this.messageStore = messageStore || null;
 	}
 
 	public setSocket(socket: WASocketType | null): void {
@@ -92,7 +96,12 @@ export class MessageHandler {
 				`[${timestamp}] ${isGroup ? `[${chatInfo.chatName}]` : ""} ${chatInfo.contactName}: ${messageText}`,
 			);
 
-			// Add message to history for this chat
+			// Store message persistently
+			if (this.messageStore) {
+				this.messageStore.storeMessage(message, chatId, chatInfo.contactName);
+			}
+
+			// Add message to history for this chat (for backward compatibility)
 			this.openaiService.addMessageToHistory(chatId, messageText);
 
 			// Determine if this is a bot group message

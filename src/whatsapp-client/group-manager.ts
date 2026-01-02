@@ -132,4 +132,51 @@ export class GroupManager {
 			);
 		}
 	}
+
+	/**
+	 * Get all cached groups that match ALLOWED_CHAT_NAMES
+	 */
+	public getAllowedCachedGroups(): Array<{ id: string; name: string }> {
+		const groups: Array<{ id: string; name: string }> = [];
+		
+		// Get all keys from the cache
+		const keys = this.groupCache.keys();
+		
+		for (const groupId of keys) {
+			const metadata = this.getCachedMetadata(groupId);
+			if (metadata && metadata.subject) {
+				const groupName = metadata.subject;
+				// Check if this group matches ALLOWED_CHAT_NAMES
+				if (this.shouldCacheGroupMetadata(groupName, groupId)) {
+					groups.push({
+						id: groupId,
+						name: groupName,
+					});
+				}
+			}
+		}
+		
+		return groups;
+	}
+
+	/**
+	 * Find a group ID by name (searches cached groups)
+	 */
+	public findGroupIdByName(groupName: string): string | null {
+		const keys = this.groupCache.keys();
+		
+		for (const groupId of keys) {
+			const metadata = this.getCachedMetadata(groupId);
+			if (metadata && metadata.subject) {
+				if (
+					metadata.subject === groupName ||
+					this.config.containsWholeWord(metadata.subject, groupName)
+				) {
+					return groupId;
+				}
+			}
+		}
+		
+		return null;
+	}
 }

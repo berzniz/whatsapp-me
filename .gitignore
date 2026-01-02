@@ -137,3 +137,6 @@ dist
 
 # Baileys
 .baileys_auth
+
+# Message history storage
+.message-history/

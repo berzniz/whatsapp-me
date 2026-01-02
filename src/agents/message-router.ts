@@ -3,10 +3,16 @@ import { SessionManager } from "./session-manager.js";
 import { BotGroupAgent } from "./bot-group-agent.js";
 import { EventDetectionAgent } from "./event-detection-agent.js";
 import { ChatAgent } from "./chat-agent.js";
+import { GroupSummaryAgent } from "./group-summary-agent.js";
+import { MessageHistoryFetcher } from "./message-history-fetcher.js";
 import type { EventDetails, AgentContext } from "./types.js";
 import type { WhatsAppAdapter } from "./whatsapp-adapter.js";
 import type { EventDeduplicationService } from "../event-deduplication.js";
 import type { Session } from "@openai/agents";
+import type { WASocketType } from "../whatsapp-client/types.js";
+import type { GroupManager } from "../whatsapp-client/group-manager.js";
+import type { OpenAIService } from "../openai-service.js";
+import type { MessageStore } from "../message-store.js";
 
 /**
  * Routes messages to appropriate agents based on chat name/ID
@@ -17,14 +23,43 @@ export class MessageRouterService {
 	private eventDetectionAgent: EventDetectionAgent;
 	private _chatAgent: ChatAgent; // Kept for potential future use
 	private config: WhatsAppConfig;
+	private messageHistoryFetcher: MessageHistoryFetcher | null;
+	private groupSummaryAgent: GroupSummaryAgent | null;
 
 	constructor(
 		config: WhatsAppConfig,
 		whatsappAdapter?: WhatsAppAdapter,
 		eventDeduplicationService?: EventDeduplicationService,
+		socket?: WASocketType | null,
+		groupManager?: GroupManager,
+		openaiService?: OpenAIService | null,
+		messageStore?: MessageStore | null,
 	) {
 		this.config = config;
 		this.sessionManager = new SessionManager();
+
+		// Initialize message history fetcher if socket and groupManager are available
+		this.messageHistoryFetcher =
+			socket && groupManager
+				? new MessageHistoryFetcher(
+						socket,
+						config,
+						groupManager,
+						openaiService || null,
+						messageStore || null,
+					)
+				: null;
+
+		// Initialize group summary agent if fetcher is available
+		this.groupSummaryAgent =
+			this.messageHistoryFetcher && groupManager
+				? new GroupSummaryAgent(
+						whatsappAdapter || null,
+						this.messageHistoryFetcher,
+						config,
+						groupManager,
+					)
+				: null;
 
 		// Initialize agents with dependencies
 		this._chatAgent = new ChatAgent(whatsappAdapter, config.targetGroupId);
@@ -36,7 +71,17 @@ export class MessageRouterService {
 		this.botGroupAgent = new BotGroupAgent(
 			whatsappAdapter,
 			config.botGroupId || null,
+			this.groupSummaryAgent,
 		);
+	}
+
+	/**
+	 * Update socket reference (needed when connection is established)
+	 */
+	public setSocket(socket: WASocketType | null): void {
+		if (this.messageHistoryFetcher) {
+			this.messageHistoryFetcher.setSocket(socket);
+		}
 	}
 
 	/**

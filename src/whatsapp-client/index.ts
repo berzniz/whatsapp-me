@@ -8,6 +8,7 @@ import { MessageHandler } from "./message-handler.js";
 import { MessageSender } from "./message-sender.js";
 import { SyncService } from "./sync-service.js";
 import { WhatsAppAdapterImpl } from "../agents/whatsapp-adapter-impl.js";
+import { MessageStore } from "../message-store.js";
 import type { WASocketType } from "./types.js";
 
 export class WhatsAppClient {
@@ -20,6 +21,7 @@ export class WhatsAppClient {
 	private messageHandler: MessageHandler;
 	private openaiService: OpenAIService;
 	private eventDeduplicationService: EventDeduplicationService;
+	private messageStore: MessageStore;
 
 	constructor() {
 		this.config = new WhatsAppConfig();
@@ -27,15 +29,26 @@ export class WhatsAppClient {
 		this.groupManager = new GroupManager(this.config);
 		this.messageSender = new MessageSender();
 
+		// Create message store (loads messages from disk on initialization)
+		this.messageStore = new MessageStore();
+		console.log(
+			`Message store initialized with ${this.messageStore.getTotalMessageCount()} total messages`,
+		);
+
 		// Create WhatsApp adapter for agents
 		const whatsappAdapter = new WhatsAppAdapterImpl(this.messageSender);
 
-		// Initialize OpenAI service with shared config, adapter and deduplication service
+		// Initialize OpenAI service with shared config, adapter, deduplication service, socket, groupManager, and messageStore
 		// Using shared config ensures botGroupId updates are reflected
+		// Socket and groupManager are needed for GroupSummaryAgent to fetch message history
+		// MessageStore provides persistent message storage
 		this.openaiService = new OpenAIService(
 			this.config,
 			whatsappAdapter,
 			this.eventDeduplicationService,
+			null, // Socket will be set later via setSocket
+			this.groupManager,
+			this.messageStore,
 		);
 
 		this.connectionManager = new ConnectionManager(this.config);
@@ -47,6 +60,7 @@ export class WhatsAppClient {
 			this.groupManager,
 			this.messageSender,
 			this.config,
+			this.messageStore,
 		);
 		this.eventHandler = new EventHandler(
 			null,
@@ -81,6 +95,7 @@ export class WhatsAppClient {
 		this.messageHandler.setSocket(socket);
 		this.eventHandler.setSocket(socket);
 		this.messageSender.setSocket(socket);
+		this.openaiService.setSocket(socket); // Update socket for message history fetcher
 		// Don't set ready here - it will be set when connection actually opens
 		// via the connectionOpenHandler
 	}

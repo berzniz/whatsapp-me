@@ -4,6 +4,9 @@ import { WhatsAppConfig } from "./whatsapp-client/config.js";
 import type { AgentContext } from "./agents/types.js";
 import type { WhatsAppAdapter } from "./agents/whatsapp-adapter.js";
 import type { EventDeduplicationService } from "./event-deduplication.js";
+import type { WASocketType } from "./whatsapp-client/types.js";
+import type { GroupManager } from "./whatsapp-client/group-manager.js";
+import type { MessageStore } from "./message-store.js";
 
 // Load environment variables
 dotenv.config();
@@ -30,6 +33,9 @@ export class OpenAIService {
 		config: WhatsAppConfig,
 		whatsappAdapter?: WhatsAppAdapter,
 		eventDeduplicationService?: EventDeduplicationService,
+		socket?: WASocketType | null,
+		groupManager?: GroupManager,
+		messageStore?: MessageStore | null,
 	) {
 		const apiKey = process.env.OPENAI_API_KEY;
 		if (!apiKey) {
@@ -42,7 +48,18 @@ export class OpenAIService {
 			this.config,
 			whatsappAdapter,
 			eventDeduplicationService,
+			socket,
+			groupManager,
+			this, // Pass self so MessageHistoryFetcher can access stored message history
+			messageStore || null,
 		);
+	}
+
+	/**
+	 * Update socket reference (needed when connection is established)
+	 */
+	public setSocket(socket: WASocketType | null): void {
+		this.router.setSocket(socket);
 	}
 
 	/**
