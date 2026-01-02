@@ -67,6 +67,38 @@ export class SyncService {
 			);
 		}
 
+		// Step 4: Verify bot group is accessible if configured
+		if (this.config.botGroupId) {
+			// Always verify bot group, but only update metadata if it's been a week
+			if (this.groupManager.shouldUpdateMetadata(this.config.botGroupId)) {
+				try {
+					const metadata = await this.socket.groupMetadata(
+						this.config.botGroupId,
+					);
+					this.groupManager.setCachedMetadataAndMarkUpdated(
+						this.config.botGroupId,
+						metadata,
+					);
+					console.log(
+						`✓ Bot group verified: ${metadata.subject || this.config.botGroupId}`,
+					);
+				} catch (error) {
+					console.warn(
+						`⚠ Could not verify bot group ${this.config.botGroupId}:`,
+						error,
+					);
+				}
+			} else {
+				console.log(
+					`✓ Bot group metadata is up to date (updated less than a week ago)`,
+				);
+			}
+		} else if (this.config.botGroupName) {
+			console.warn(
+				`⚠ Bot group "${this.config.botGroupName}" not found. Make sure the bot is added to the group.`,
+			);
+		}
+
 		console.log("Full synchronization completed");
 	}
 
@@ -136,7 +168,9 @@ export class SyncService {
 				}
 			} else {
 				// Verify the target group exists
-				const targetGroup = groups.find((g) => g.id === this.config.targetGroupId);
+				const targetGroup = groups.find(
+					(g) => g.id === this.config.targetGroupId,
+				);
 				if (targetGroup) {
 					console.log(
 						`✓ Verified target group exists: ${targetGroup.subject || this.config.targetGroupId}`,
@@ -148,6 +182,44 @@ export class SyncService {
 				} else {
 					console.warn(
 						`⚠ Target group ID ${this.config.targetGroupId} not found in synced groups.`,
+					);
+				}
+			}
+
+			// If we don't have bot group ID yet, search for it
+			if (this.config.botGroupName && !this.config.botGroupId) {
+				const foundBotGroup = groups.find(
+					(g) => g.subject === this.config.botGroupName,
+				);
+				if (foundBotGroup) {
+					this.config.botGroupId = foundBotGroup.id;
+					console.log(
+						`✓ Found bot group "${this.config.botGroupName}" with ID: ${this.config.botGroupId}`,
+					);
+					// Cache bot group metadata
+					this.groupManager.setCachedMetadataAndMarkUpdated(
+						this.config.botGroupId,
+						foundBotGroup,
+					);
+				} else {
+					console.log(
+						`Bot group "${this.config.botGroupName}" not found in ${groups.length} groups.`,
+					);
+				}
+			} else if (this.config.botGroupId) {
+				// Verify the bot group exists
+				const botGroup = groups.find((g) => g.id === this.config.botGroupId);
+				if (botGroup) {
+					console.log(
+						`✓ Verified bot group exists: ${botGroup.subject || this.config.botGroupId}`,
+					);
+					this.groupManager.setCachedMetadataAndMarkUpdated(
+						this.config.botGroupId,
+						botGroup,
+					);
+				} else {
+					console.warn(
+						`⚠ Bot group ID ${this.config.botGroupId} not found in synced groups.`,
 					);
 				}
 			}
@@ -175,4 +247,3 @@ export class SyncService {
 		}
 	}
 }
-

@@ -84,12 +84,17 @@ export class OpenAIService {
 			this.messageHistory.set(chatId, []);
 		}
 
-		const history = this.messageHistory.get(chatId)!;
-		history.push(message);
+		const history = this.messageHistory.get(chatId);
+		if (history) {
+			history.push(message);
 
-		// Keep only the last MAX_HISTORY_LENGTH messages
-		if (history.length > this.MAX_HISTORY_LENGTH) {
-			this.messageHistory.set(chatId, history.slice(-this.MAX_HISTORY_LENGTH));
+			// Keep only the last MAX_HISTORY_LENGTH messages
+			if (history.length > this.MAX_HISTORY_LENGTH) {
+				this.messageHistory.set(
+					chatId,
+					history.slice(-this.MAX_HISTORY_LENGTH),
+				);
+			}
 		}
 	}
 
@@ -326,6 +331,88 @@ If no time specified, use 08:00 AM
 				startDateISO: null,
 				endDateISO: null,
 			};
+		}
+	}
+
+	/**
+	 * Get a general chat response from OpenAI (not event detection)
+	 */
+	public async getChatResponse(
+		chatId: string,
+		message: string,
+	): Promise<string | null> {
+		try {
+			// Get the message history for context
+			const history = this.getMessageHistory(chatId);
+
+			// Create the prompt for OpenAI
+			const prompt = `
+You are a helpful assistant in a WhatsApp group chat. Provide a helpful, concise response to the user's message.
+
+Previous context:
+${history.map((msg, i) => `[${i + 1}] ${msg}`).join("\n")}
+
+Current message: ${message}
+
+Provide a helpful response. Keep it concise and natural. If the content is in Hebrew, respond in Hebrew.
+`;
+
+			// Call OpenAI API
+			const startTime = Date.now();
+			let response: Awaited<
+				ReturnType<typeof this.openai.chat.completions.create>
+			>;
+
+			try {
+				const apiCall = this.openai.chat.completions.create({
+					model: "gpt-4o",
+					messages: [
+						{
+							role: "system",
+							content:
+								"You are a helpful assistant in a WhatsApp group chat. Provide helpful, concise responses. Match the language of the user's message.",
+						},
+						{ role: "user", content: prompt },
+					],
+					temperature: 0.7,
+					max_tokens: 500,
+				});
+
+				// Add timeout safety net (35 seconds)
+				const timeoutPromise = new Promise<never>((_, reject) =>
+					setTimeout(
+						() =>
+							reject(new Error("OpenAI API call timed out after 35 seconds")),
+						35000,
+					),
+				);
+
+				response = await Promise.race([apiCall, timeoutPromise]);
+
+				const duration = Date.now() - startTime;
+				console.log(`OpenAI chat API call completed in ${duration}ms`);
+			} catch (apiError: unknown) {
+				const duration = Date.now() - startTime;
+				const errorMessage =
+					apiError instanceof Error ? apiError.message : String(apiError);
+				console.error(
+					`OpenAI chat API call failed after ${duration}ms:`,
+					errorMessage,
+				);
+				throw apiError;
+			}
+
+			const content = response.choices[0]?.message?.content || "";
+
+			if (!content) {
+				console.warn("OpenAI API returned empty content");
+				return null;
+			}
+
+			return content.trim();
+		} catch (error: unknown) {
+			console.error("Error getting chat response from OpenAI:", error);
+			return null;
 		}
 	}
 }

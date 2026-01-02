@@ -150,6 +150,15 @@ export class WhatsAppClient {
 				`⚠ Target group "${this.config.targetGroupName}" not found. Event summaries will not be sent until the group is found.`,
 			);
 		}
+		if (this.config.botGroupId) {
+			console.log(
+				`Bot group "${this.config.botGroupName}" is active. The bot will respond to messages in this group.`,
+			);
+		} else if (this.config.botGroupName) {
+			console.log(
+				`⚠ Bot group "${this.config.botGroupName}" not found. Bot responses will not be sent until the group is found.`,
+			);
+		}
 	}
 
 	public async disconnect(): Promise<void> {

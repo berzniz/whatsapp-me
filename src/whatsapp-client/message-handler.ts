@@ -80,6 +80,43 @@ export class MessageHandler {
 			// Get chat and contact information
 			const chatInfo = await this.getChatInfo(chatId, message, isGroup);
 
+			// Check if this is a message from the bot group
+			if (isGroup && this.config.botGroupId && chatId === this.config.botGroupId) {
+				// Skip bot responses (messages starting with robot emoji) to avoid loops
+				if (messageText.startsWith("🤖")) {
+					return;
+				}
+				// Handle bot group messages differently
+				console.log(`\n--------------------------------`);
+				console.log(
+					`[${timestamp}] [${chatInfo.chatName}] ${chatInfo.contactName}: ${messageText}`,
+				);
+				console.log(`Bot group message detected, getting OpenAI response...`);
+
+				// Add message to history for this chat
+				this.openaiService.addMessageToHistory(chatId, messageText);
+
+				// Get response from OpenAI
+				const response = await this.openaiService.getChatResponse(
+					chatId,
+					messageText,
+				);
+
+				if (response) {
+					// Send response back to bot group with robot emoji
+					const responseWithEmoji = `🤖 ${response}`;
+					await this.messageSender.sendMessageToGroup(
+						this.config.botGroupId,
+						responseWithEmoji,
+					);
+					console.log(`Sent bot response to bot group`);
+				} else {
+					console.warn(`Failed to get response from OpenAI for bot group message`);
+				}
+
+				return; // Don't process as event detection
+			}
+
 			// Log the message
 			console.log(`\n--------------------------------`);
 			console.log(

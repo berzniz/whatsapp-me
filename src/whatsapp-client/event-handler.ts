@@ -70,6 +70,21 @@ export class EventHandler {
 						}
 					}
 
+					// Check if this is our bot group (only if not already configured from env)
+					if (
+						update.subject &&
+						this.config.botGroupName &&
+						!this.config.botGroupId &&
+						update.id
+					) {
+						if (update.subject === this.config.botGroupName) {
+							this.config.botGroupId = update.id;
+							console.log(
+								`Found bot group "${this.config.botGroupName}" with ID: ${this.config.botGroupId}`,
+							);
+						}
+					}
+
 					// Only update group metadata cache for allowed groups to avoid rate limits
 					if (
 						!this.groupManager.shouldCacheGroupMetadata(
@@ -128,6 +143,20 @@ export class EventHandler {
 						this.config.targetGroupId = chat.id;
 						console.log(
 							`Found target group "${this.config.targetGroupName}" with ID: ${this.config.targetGroupId}`,
+						);
+					}
+
+					// Look for our bot group in new chats (only if not already configured from env)
+					if (
+						chat.id &&
+						isJidGroup(chat.id) &&
+						this.config.botGroupName &&
+						chat.name === this.config.botGroupName &&
+						!this.config.botGroupId
+					) {
+						this.config.botGroupId = chat.id;
+						console.log(
+							`Found bot group "${this.config.botGroupName}" with ID: ${this.config.botGroupId}`,
 						);
 					}
 				}

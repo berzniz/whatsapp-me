@@ -4,6 +4,8 @@ export class WhatsAppConfig {
 	public readonly sessionDir = ".baileys_auth";
 	public targetGroupName: string = "אני"; // Default, will be overridden in configureTargetGroup
 	public targetGroupId: string | null = null;
+	public botGroupName: string | null = null;
+	public botGroupId: string | null = null;
 	public readonly allowedChatNames: string[];
 
 	constructor() {
@@ -15,6 +17,9 @@ export class WhatsAppConfig {
 
 		// Configure target group from environment variables
 		this.configureTargetGroup();
+
+		// Configure bot group from environment variables
+		this.configureBotGroup();
 
 		// Ensure session directory exists
 		this.ensureSessionDir();
@@ -42,6 +47,27 @@ export class WhatsAppConfig {
 			// Use default value if nothing is configured in .env
 			this.targetGroupName = "אני"; // Default target group name
 			console.log(`Using default target group name: "${this.targetGroupName}"`);
+		}
+	}
+
+	private configureBotGroup(): void {
+		// Read bot group configuration from environment variables
+		const envBotGroupId = process.env.BOT_GROUP_ID?.trim();
+		const envBotGroupName = process.env.BOT_GROUP_NAME?.trim();
+
+		if (envBotGroupId) {
+			// If BOT_GROUP_ID is provided, use it directly
+			this.botGroupId = envBotGroupId;
+			console.log(
+				`Using bot group ID from environment: ${this.botGroupId}`,
+			);
+			this.botGroupName = envBotGroupName || null;
+		} else if (envBotGroupName) {
+			// If only BOT_GROUP_NAME is provided, use it for searching
+			this.botGroupName = envBotGroupName;
+			console.log(
+				`Will search for bot group by name: "${this.botGroupName}"`,
+			);
 		}
 	}
 

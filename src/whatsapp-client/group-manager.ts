@@ -19,8 +19,9 @@ export class GroupManager {
 	 * Check if a group should have its metadata cached
 	 * We cache metadata for:
 	 * 1. The target group (always) - needed to send messages
-	 * 2. Groups in the allowed list (if ALLOWED_CHAT_NAMES is set)
-	 * 3. All groups (if no allowed list is specified)
+	 * 2. The bot group (always) - needed to send messages
+	 * 3. Groups in the allowed list (if ALLOWED_CHAT_NAMES is set)
+	 * 4. All groups (if no allowed list is specified)
 	 */
 	public shouldCacheGroupMetadata(
 		groupSubject: string | null,
@@ -28,6 +29,11 @@ export class GroupManager {
 	): boolean {
 		// Always cache the target group
 		if (groupId === this.config.targetGroupId) {
+			return true;
+		}
+
+		// Always cache the bot group
+		if (groupId === this.config.botGroupId) {
 			return true;
 		}
 
