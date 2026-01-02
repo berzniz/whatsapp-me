@@ -25,12 +25,16 @@ export class BotGroupAgent {
 		// Create sub-agents for handoffs - these are the actual Agent instances
 		const chatSubAgent = new Agent({
 			name: "Chat Sub-Agent",
+			handoffDescription:
+				"Handles general conversation, questions, greetings, and casual chat. Use for any message that is not about events, calendars, or group message summaries.",
 			instructions:
 				"Handle general conversation and chat queries in a WhatsApp group. Provide helpful, concise responses. Match the language of the user's message.",
 		});
 
 		const eventSubAgent = new Agent({
 			name: "Event Detection Sub-Agent",
+			handoffDescription:
+				"Handles event-related queries: detecting events, extracting event details, calendar information, meetings, appointments, dates, and times.",
 			instructions: `Detect and extract event information from messages. Analyze WhatsApp messages for event information. Look for actual events (meetings, parties, gatherings) with date references.
 
 Always respond with a valid JSON object in this exact format:
@@ -52,6 +56,8 @@ Always respond with a valid JSON object in this exact format:
 			? this.groupSummaryAgent.getAgent()
 			: new Agent({
 					name: "Group Summary Sub-Agent",
+					handoffDescription:
+						"Handles questions about WhatsApp groups, reading messages, summarizing conversations, 'who said what', 'how many messages', and any group-related queries.",
 					instructions: `Read and summarize messages from WhatsApp groups specified in ALLOWED_CHAT_NAMES. Answer questions about what was discussed in those groups, provide summaries of recent conversations, and identify key topics or decisions.
 
 When asked about a group or to summarize messages:
